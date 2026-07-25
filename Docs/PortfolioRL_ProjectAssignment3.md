@@ -33,7 +33,11 @@
    4.7 [Benchmark and Relative-Performance Metrics](#47-benchmark-and-relative-performance-metrics)
    4.8 [Evaluation Protocol](#48-evaluation-protocol)
    4.9 [Interpretation and Decision Criteria](#49-interpretation-and-decision-criteria)
-5. [References](#5-references)
+5. [Implementation Status](#5-implementation-status)
+   5.1 [Where each design element lives](#51-where-each-design-element-lives)
+   5.2 [Departures from the original plan](#52-departures-from-the-original-plan)
+   5.3 [Reproducibility](#53-reproducibility)
+6. [References](#6-references)
 
 ---
 
@@ -51,12 +55,30 @@ The goal of this project is to develop and evaluate a reinforcement learning age
 
 The proposed reinforcement learning strategy will be compared against traditional portfolio strategies, including buy-and-hold, equal-weight allocation, fixed 60/40 stock-bond allocation, and periodic rebalancing. The purpose is not to predict future prices directly, but to learn an adaptive allocation policy that can respond to historical market conditions in a simulated backtesting environment.
 
-The learned policy will be benchmarked against the standard rule-based strategies it is meant to improve upon:
+The learned policy is benchmarked against the standard rule-based strategies it is meant to improve upon. All nine are executed inside the *same* environment as the agent and pay the *same* transaction cost, so no benchmark is flattered by a frictionless simulation:
 
-1. Buy-and-hold (a single broad-market position held for the full horizon).
-2. Equal-weight portfolio, periodically rebalanced.
-3. Fixed 60/40 stock–bond portfolio.
-4. Calendar-based (monthly) rebalanced portfolio.
+**Rebalanced allocations** (the agent's own action set, held constant):
+
+1. Fixed 60/40 stock–bond portfolio, rebalanced weekly.
+2. Equal-weight portfolio (25% each), rebalanced weekly.
+3. Equity-heavy 80/20 portfolio, rebalanced weekly.
+4. All cash (100% SHY) — the risk-free floor.
+
+**Buy-and-hold** (bought once, never traded again, so weights drift with the market):
+
+5. 100% SPY.
+6. 60/40 bought and held.
+
+**Adaptive rules** — the benchmarks that matter most, because beating a static rule with a dynamic policy proves little if a simple dynamic rule does the same:
+
+7. Volatility targeting: scale equity exposure to hold portfolio volatility near a 10% annual target.
+8. Trend following: the Faber (2007) 50-day/200-day moving-average rule, risk-on above the signal and risk-off below it.
+
+**Floor:**
+
+9. Random allocation, reported as a distribution over 30 seeds rather than a single lucky or unlucky run.
+
+One further benchmark, naive inverse-volatility risk parity, was implemented and then **rejected**: with SHY in the universe its volatility is roughly a tenth of the other assets', so inverse-volatility weighting degenerates to a near-100% cash position and merely duplicates benchmark 4. Volatility targeting and trend following replace it as the adaptive comparators.
 
 ### 1.3 Expected Business Value
 
@@ -74,7 +96,7 @@ The learned policy will be benchmarked against the standard rule-based strategie
 | U.S. equities | SPY | Growth asset | Captures broad U.S. stock market exposure. |
 | Long-term bonds | TLT | Defensive asset | Provides interest-rate-sensitive fixed-income exposure. |
 | Gold | GLD | Hedge asset | Can help diversify during stress or inflation regimes. |
-| Short-term treasury/cash proxy | SHY or BIL | Low-risk asset | Represents a defensive or cash-like allocation. |
+| Short-term treasury/cash proxy | SHY | Low-risk asset | Represents a defensive or cash-like allocation. SHY is used rather than BIL because BIL's inception (May 2007) post-dates the start of the sample window, and a benchmark asset that does not exist for the first three years of the backtest is not usable. |
 
 ---
 
@@ -148,7 +170,7 @@ To keep the first implementation manageable, the project will use a discrete act
 
 | Action | Portfolio Allocation |
 |---|---|
-| 0 | 100% SHY or BIL — defensive cash-like allocation |
+| 0 | 100% SHY — defensive cash-like allocation |
 | 1 | 60% SPY / 40% TLT — traditional balanced allocation |
 | 2 | 40% SPY / 40% TLT / 20% GLD — diversified balanced allocation |
 | 3 | 80% SPY / 20% TLT — equity-heavy allocation |
@@ -160,18 +182,26 @@ To keep the first implementation manageable, the project will use a discrete act
 The reward function should reflect the business objective: generate returns while controlling risk and trading costs. A return-only reward could encourage the agent to take excessive risk. Therefore, the proposed reward includes penalties for turnover, volatility, and drawdown.
 
 ```
-Reward_t = portfolio_return_t − lambda_1 * turnover_t − lambda_2 * volatility_t − lambda_3 * drawdown_t
+Reward_t = c · [ log(1 + net_return_t) − lambda_1 · turnover_t − lambda_2 · volatility_t − lambda_3 · max(0, Δdrawdown_t) ]
 ```
+
+Three details of the implemented form are worth stating explicitly, because each was a deliberate decision rather than a detail of notation.
+
+- **The growth term is logarithmic.** Summing log returns over an episode gives exactly the log of total wealth growth, so maximizing undiscounted cumulative reward maximizes terminal wealth. With simple returns the sum is not the compounded outcome, and the agent would be optimizing a quantity nobody cares about.
+- **Transaction costs are charged twice, on purpose — but in two different senses.** They are deducted from wealth (so the portfolio genuinely shrinks) *and* appear as the explicit turnover penalty λ₁. The first is accounting; the second is a shaping term that lets the strength of the trading disincentive be tuned independently of the real cost.
+- **The drawdown term penalizes the *increment*, not the level.** Penalizing the level would charge the agent repeatedly for a drawdown it already suffered and cannot undo, which produces an agent that abandons risk permanently after one bad period.
+- **A scale factor `c` (set to 100) converts the reward into percentage points.** Weekly log returns are on the order of 0.002, and TD targets that small interact poorly with default network initialization and learning rates. This is a numerical convenience with no effect on the optimal policy.
 
 **Table 5.** Reward function terms.
 
 | Term | Meaning |
 |---|---|
-| portfolio_return_t | Return produced by the selected allocation during the next period. |
-| turnover_t | Amount of portfolio weights changed during rebalancing. |
-| volatility_t | Recent portfolio risk level. |
-| drawdown_t | Decline from the previous portfolio peak. |
-| lambda_1, lambda_2, lambda_3 | Penalty weights controlling the importance of trading cost and risk control. |
+| net_return_t | Return produced by the selected allocation over the next five trading days, after transaction costs. |
+| turnover_t | Half the sum of absolute weight changes, measured against the *drifted* weights rather than the previous target. |
+| volatility_t | Trailing 20-day standard deviation of realized portfolio returns. |
+| Δdrawdown_t | The *increase* in drawdown during the step; zero when the drawdown is unchanged or recovering. |
+| lambda_1, lambda_2, lambda_3 | Penalty weights controlling the importance of trading cost and risk control (0.002, 0.10, 0.50). |
+| c | Reward scale (100), converting log returns into percentage points. |
 
 ### 2.6 Transition and Episode
 
@@ -181,7 +211,16 @@ A transition occurs when the agent moves from one market state to the next after
 Current state -> allocation action -> market return occurs -> portfolio value updates -> new state
 ```
 
-An episode represents one complete backtesting period, such as January 2010 through December 2018 for training. During each episode, the agent repeatedly observes the market state, chooses an allocation, receives a reward, and updates its learning process.
+**Decision frequency versus accounting frequency.** The agent decides *weekly* (every five trading days) but the environment accounts *daily*. Weekly decisions keep turnover and transaction costs realistic and give the agent roughly 1,100 decision points across the sample rather than 5,300 nearly identical ones; daily accounting means volatility, drawdown and the wealth path are measured at the frequency they actually occur, so a mid-week crash is not invisible.
+
+**Episode construction differs between training and evaluation, deliberately.**
+
+- *Training* episodes start at a random point in the training window and run for 52 decisions (one year). Random starts multiply the number of distinct trajectories available from a fixed history, prevent the agent from memorizing one path through 2008, and decorrelate consecutive episodes.
+- *Evaluation* episodes are a single deterministic pass over the full split, from the first day to the last. This is the only construction that produces a wealth curve comparable with a benchmark backtest.
+
+This asymmetry is measured rather than assumed: an ablation in notebook 03 trains identical agents under both samplers and shows that full-window training episodes achieve roughly ten times the training-split reward while generalizing materially worse to validation — a textbook overfitting signature.
+
+No episode ever *terminates* in the MDP sense: reaching the end of the window is truncation, not a terminal state, and the bootstrap term in the TD target is therefore retained at the episode boundary. Treating truncation as termination would teach the agent that wealth ceases to matter at an arbitrary calendar date.
 
 ### 2.7 Why Reinforcement Learning Is Appropriate
 
@@ -231,22 +270,50 @@ Two stabilization mechanisms are essential and will both be implemented: (1) an 
 
 ### 3.3 Algorithm Justification and Alternatives Considered
 
-DQN is an appropriate primary choice for this project because the action space is small and discrete (six predefined allocations), which is exactly the setting DQN was designed for, and because it is well documented and comparatively straightforward to debug and tune within a single-course timeline. As a refinement, the project will consider Double DQN (van Hasselt, Guez, & Silver, 2016), which decouples action selection from action evaluation to reduce the systematic overestimation bias that standard DQN exhibits in the max operator of the target above; this is a low-cost addition (a second forward pass through the online network) that can be added once a baseline DQN is working.
+DQN is an appropriate primary choice for this project because the action space is small and discrete (six predefined allocations), which is exactly the setting DQN was designed for, and because it is well documented and comparatively straightforward to debug and tune within a single-course timeline.
+
+**The ablation is a 2×2 factorial over two independent enhancements.** Rather than reporting one architecture, the project trains four and compares them under identical conditions:
+
+| Variant | Double Q-learning | Duelling heads |
+|---|---|---|
+| Vanilla DQN | no | no |
+| Double DQN | **yes** | no |
+| Duelling DQN | no | **yes** |
+| Double + Duelling DQN | **yes** | **yes** |
+
+*Double Q-learning* (van Hasselt, Guez, & Silver, 2016) decouples action selection from action evaluation, replacing `max_a' Q(s',a';θ⁻)` with `Q(s', argmax_a' Q(s',a';θ); θ⁻)`. This reduces the systematic overestimation bias the `max` operator introduces, and costs one additional forward pass through the online network. Overestimation is particularly relevant here because financial rewards are noisy, and the `max` of noisy estimates is biased upward by construction.
+
+*Duelling architectures* (Wang et al., 2016) split the network head into a state-value stream V(s) and an advantage stream A(s,a), recombining them as `Q(s,a) = V(s) + A(s,a) − mean_a A(s,a)`. The mean subtraction is required for identifiability, since V and A are otherwise determined only up to a constant. This matters for portfolio allocation because in most weeks the choice of allocation barely affects the outcome — the state's value is dominated by the market, not the action — and a duelling network can learn V(s) accurately without needing to distinguish six nearly identical Q-values. The cost is 65 additional parameters out of roughly 12,800.
+
+**Prioritized experience replay was considered and dropped.** It was in the original plan and appears in earlier drafts of Sections 4.6 and 4.7; it is not in the final ablation. The reason is that PER's benefit comes from replaying high-TD-error transitions more often, but in this environment high TD error is concentrated in genuinely high-variance market episodes (crashes, sharp reversals) rather than in informative-but-rare ones. Prioritizing them oversamples exactly the periods where the reward signal is least reliable, and correcting for the resulting bias requires importance-sampling weights with their own annealing schedule — more hyperparameters to tune with no clear prior that it helps. Dropping it also keeps the ablation a clean 2×2 factorial, in which each cell differs from its neighbours by exactly one mechanism.
 
 Two alternative algorithm families were considered and set aside for this stage of the project. Policy-gradient methods such as Proximal Policy Optimization (Schulman et al., 2017) and actor-critic methods such as DDPG (Lillicrap et al., 2016) are natural choices if the action space is later extended to continuous portfolio weights (an agent that directly outputs a weight vector rather than choosing among six predefined allocations), and are noted here as a planned future extension consistent with the future-work note already raised in Section 2.4. They are not selected as the primary algorithm now because they introduce additional hyperparameters and training instability that are harder to diagnose within the scope of a single course project.
 
+**Implementation note.** The agent is implemented directly in PyTorch rather than taken from Stable-Baselines3. SB3's `DQN` is deliberately vanilla — it implements neither Double Q-learning nor duelling heads — so the 2×2 ablation above is not expressible in it without subclassing the loss computation anyway. Writing roughly 300 lines of transparent code was judged preferable to patching a library from the outside, and it makes the diagnostics in Section 4.6 directly observable.
+
 ### 3.4 Dataset(s)
 
-The project uses publicly available historical daily price data retrieved with the `yfinance` Python library for the four exchange-traded funds identified in Table 1: SPY (U.S. equities), TLT (long-term Treasury bonds), GLD (gold), and SHY or BIL (short-term Treasury/cash proxy). No proprietary or labeled dataset is required, since reinforcement learning does not need ground-truth labels: the environment computes the reward directly from realized asset returns and the agent's own allocation decisions, as described in Section 2.5.
+The project uses publicly available historical daily price data retrieved with the `yfinance` Python library for the four exchange-traded funds identified in Table 1: SPY (U.S. equities), TLT (long-term Treasury bonds), GLD (gold), and SHY (short-term Treasury/cash proxy). The 13-week Treasury bill yield (`^IRX`) supplies the risk-free rate used in the Sharpe and Sortino calculations. No proprietary or labeled dataset is required, since reinforcement learning does not need ground-truth labels: the environment computes the reward directly from realized asset returns and the agent's own allocation decisions, as described in Section 2.5.
 
-Data preparation will include the following steps:
+**The sample window is set by the youngest asset.** GLD began trading on 18 November 2004, so that is the first date on which all four assets exist simultaneously. Starting earlier would require either dropping gold or back-filling a price series that did not exist — both of which are forms of look-ahead. The full window is therefore 2004-11-18 to 2025-12-31, roughly 5,300 trading days, and it contains the 2008 financial crisis, the 2011 and 2015 corrections, the 2020 COVID crash, the 2022 simultaneous stock-and-bond drawdown, and two long bull markets.
 
-1. Downloading adjusted daily closing prices (adjusted for stock splits and dividend payouts) for a multi-year historical window, tentatively January 2010 through December 2024.
-2. Aligning all four tickers to a common trading calendar and forward-filling or dropping any rows with missing observations.
-3. Converting adjusted prices to daily log returns.
-4. Deriving the state features described in Table 3: rolling volatility (e.g., 20-day standard deviation of returns), momentum (e.g., cumulative return over a 63-day lookback), and moving-average ratios (e.g., 50-day versus 200-day moving average) for each asset.
+Data preparation includes the following steps:
 
-To evaluate generalization rather than memorization of a single historical period, the data will be split chronologically rather than shuffled, since shuffling would leak future information into training and produce an unrealistically optimistic backtest. A tentative split is an in-sample training window (e.g., 2010–2019), a validation window used for hyperparameter selection (e.g., 2020–2021, which conveniently includes both the COVID-19 crash and its recovery as a stress test), and a held-out test window never seen during training or tuning (e.g., 2022–2024). Any feature normalization (for example z-score standardization of returns and volatility) will be fit using training-period statistics only and then applied unchanged to the validation and test periods, to avoid look-ahead bias.
+1. Downloading split- and dividend-adjusted daily closing prices. (Note that `yfinance` now returns adjusted prices in the `Close` column when `auto_adjust=True`, and no longer emits a separate `Adj Close` column.)
+2. Aligning all four tickers to a common trading calendar and dropping any rows with missing observations.
+3. Converting adjusted prices to daily simple returns for portfolio accounting and to log returns where compounding arithmetic is required.
+4. Deriving 23 market features from Table 3 — per-asset returns, 20-day and 60-day rolling volatility, 63-day momentum, and the 50-day/200-day moving-average ratio, plus cross-asset signals — and appending 8 portfolio-state features (current weights, drawdown, portfolio volatility, days held, and the previous action), for a 31-dimensional observation.
+5. Discarding the first 200 trading days, because the 200-day moving average is undefined before then and forward-filling it would fabricate a signal.
+
+**Chronological splits.** The data is split by date rather than shuffled, since shuffling would leak future information into training and produce an unrealistically optimistic backtest:
+
+| Split | Window | Trading days | Role |
+|---|---|---|---|
+| Train | 2004-11-18 → 2017-12-31 | 3,102 | Weight updates only. Contains 2008. |
+| Validation | 2018-01-01 → 2020-12-31 | 756 | Hyperparameter search and checkpoint selection. Contains the 2018 Q4 selloff and the COVID crash. |
+| Test | 2021-01-01 → 2025-12-31 | 1,255 | Opened exactly once, in notebook 05. Contains the 2022 stock-and-bond drawdown. |
+
+The validation window was chosen to contain genuine stress rather than to be conveniently calm: a configuration selected on a quiet period would be selected for the wrong reasons. Feature normalization (z-scoring, then clipping at ±5 standard deviations) is fit on training-period statistics **only** and applied unchanged to validation and test, so no distributional information from the future reaches the agent. The clip matters: without it a single 2020 outlier would dominate the scale of every feature.
 
 ### 3.5 Hyperparameter Tuning Plan
 
@@ -265,15 +332,23 @@ DQN performance is known to be sensitive to several hyperparameters. Table 6 lis
 | Hidden layer sizes | 1–2 layers, 32–256 units per layer |
 | Reward penalty weights (λ₁, λ₂, λ₃) | 0.0 to 1.0 each, tuned jointly with the RL hyperparameters |
 
-Because the data is a time series, standard k-fold cross-validation is not appropriate: shuffling folds would allow the agent to train on data from after the point it is being evaluated on, which does not reflect how the strategy would actually be deployed and would overstate performance. Hyperparameter selection will instead use walk-forward (expanding-window) validation: the agent is trained on the training window, evaluated on the validation window without further weight updates, and the validation-period result is used to compare configurations. Once a configuration is selected, the test window is used exactly once, at the end of the project, to report final performance.
+Because the data is a time series, standard k-fold cross-validation is not appropriate: shuffling folds would allow the agent to train on data from after the point it is being evaluated on, which does not reflect how the strategy would actually be deployed and would overstate performance. Hyperparameter selection instead uses walk-forward (expanding-window) validation: the agent is trained on the training window, evaluated on the validation window without further weight updates, and the validation-period result is used to compare configurations. Once a configuration is selected, the test window is used exactly once, at the end of the project, to report final performance.
 
-Given the compute and time budget of a single-course project, the search itself will proceed in two stages: first, a small coarse manual or grid search over the two or three hyperparameters expected to matter most (learning rate, discount factor, and network size) using short training runs, to eliminate clearly poor regions of the search space; second, a refined random search or Bayesian search (for example using Optuna (Akiba et al., 2019)) over roughly 15–30 trials on the remaining hyperparameters, within the ranges narrowed by the first stage. The selection criterion for the best configuration will be the Sharpe ratio achieved on the validation window rather than raw cumulative return, since raw return can be maximized by a high-variance policy that happened to get lucky; maximum drawdown on the validation window will be used as a secondary tie-breaker between configurations with similar Sharpe ratios. The final chosen configuration, along with the validation-period metrics that justified it, will be reported as part of the Project Assignment 3 performance-evaluation deliverable.
+Given the compute and time budget of a single-course project, the search proceeds in two stages.
+
+**Stage 1 — coarse grid, 18 points.** A full factorial over the three hyperparameters expected to matter most: learning rate {3e-4, 1e-3, 3e-3} × discount factor {0.95, 0.99} × hidden sizes {(64,32), (128,64), (256,128)}. Short runs (20,000 steps) at this stage; the purpose is to eliminate clearly poor regions, not to pick a winner. A grid is used rather than a random search here precisely because the space is small and the *interactions* are what matter — a random sample of 18 points would leave some learning-rate/network-size combinations unobserved.
+
+**Stage 2 — Tree-structured Parzen Estimator, 30 trials.** Optuna (Akiba et al., 2019) with a TPE sampler over seven dimensions: the three above plus batch size, target-network update interval, epsilon-decay fraction, and the drawdown penalty λ₃. Random and Bayesian search dominate grid search once the dimension count rises, because most hyperparameters have low effective importance and a grid wastes its budget resolving them (Bergstra & Bengio, 2012). A `MedianPruner` with a warm-up terminates trials whose intermediate validation Sharpe falls below the running median, which roughly doubles the number of configurations reachable in a fixed wall-clock budget. The warm-up is essential: pruning before the epsilon schedule has decayed would kill configurations for still being in their exploration phase.
+
+The selection criterion is the **Sharpe ratio on the validation window**, not raw cumulative return, since raw return can be maximized by a high-variance policy that happened to get lucky; maximum drawdown on the validation window is the secondary tie-breaker between configurations with similar Sharpe ratios.
+
+**The number of configurations evaluated is itself recorded, and used.** Searching 48 configurations and reporting the best one produces an upward-biased estimate by construction — the best of N noisy trials looks good even when all N are worthless. The total trial count and the observed variance of Sharpe ratios across trials feed directly into the Deflated Sharpe Ratio reported in Section 4.7, which is the only honest way to quote a searched-for result.
 
 ---
 
 ## 4. Performance Evaluation Metrics
 
-The algorithms proposed in Assignment 2 will be evaluated with a balanced scorecard rather than a single return measure. For PortfolioRL, a successful policy must produce competitive out-of-sample growth, control volatility and drawdown, remain effective after transaction costs, and demonstrate stable reinforcement-learning behavior. The primary comparison will be against the buy-and-hold, equal-weight, fixed 60/40, and calendar-rebalanced strategies defined in Assignment 1.
+The algorithms proposed in Assignment 2 will be evaluated with a balanced scorecard rather than a single return measure. For PortfolioRL, a successful policy must produce competitive out-of-sample growth, control volatility and drawdown, remain effective after transaction costs, and demonstrate stable reinforcement-learning behavior. The primary comparison is against the nine benchmarks listed in Section 1.2, all of which execute inside the same environment and pay the same transaction cost as the agent.
 
 ### 4.1 Evaluation Principles
 
@@ -323,7 +398,7 @@ Turnover_t = 0.5 · Σ_i | w_i,t − w_i,t−1 |
 
 ### 4.6 Reinforcement-Learning Training Metrics
 
-Financial outcomes alone do not show whether the learning process was stable. The DQN, Double DQN, Dueling DQN, and prioritized-replay variants will therefore also be monitored during training using the following diagnostic metrics:
+Financial outcomes alone do not show whether the learning process was stable. All four DQN variants defined in Section 3.3 are therefore also monitored during training using the following diagnostic metrics:
 
 1. Mean episodic reward and its moving average, which show whether the risk-adjusted training objective improves over time.
 2. Temporal-difference loss, which measures the gap between predicted Q-values and Bellman targets.
@@ -333,9 +408,19 @@ Financial outcomes alone do not show whether the learning process was stable. Th
 
 ### 4.7 Benchmark and Relative-Performance Metrics
 
-Each RL algorithm will be evaluated against every rule-based benchmark under identical assumptions. Excess return will show the return advantage over a benchmark, while active-return tracking error and the information ratio will show whether that advantage is consistent. Results will be presented for the base DQN and each enhancement so that improvements from Double DQN, Dueling DQN, or prioritized replay can be attributed to the algorithmic change rather than to a different test setup.
+Each of the four DQN variants defined in Section 3.3 is evaluated against every rule-based benchmark under identical assumptions — same environment, same initial capital, same 5 bps transaction cost, same evaluation window. Excess return shows the return advantage over a benchmark, while active-return tracking error and the information ratio show whether that advantage is consistent. **The information ratio, beta and alpha are all measured against the 60/40 rebalanced portfolio**, which is named explicitly here because an unnamed benchmark makes an information ratio uninterpretable.
 
-**Table 10.** Planned performance metrics for the PortfolioRL evaluation.
+Results are reported per variant so that any improvement can be attributed to the algorithmic change rather than to a different test setup.
+
+**Reporting a difference is not the same as demonstrating one.** Three distinct hazards stand between "the agent's Sharpe is higher" and "the agent is better", and each is addressed with a specific tool:
+
+1. **Seed variance.** A single training run reports luck as much as merit. Every variant is trained across matched seeds — seed *k* of one variant sees the same initialization and episode draws as seed *k* of every other — which makes the comparison **paired** and roughly doubles the power available from a small number of runs. Differences are tested with both a paired *t*-test and a Wilcoxon signed-rank test, because they fail differently: the *t*-test has more power when normality holds, the Wilcoxon is the one to believe when it does not.
+
+2. **Sampling noise in the return series.** Daily returns are serially correlated and heavy-tailed, so the textbook Sharpe standard error understates uncertainty. Confidence intervals for Sharpe *differences* come from a **stationary block bootstrap** (Politis & Romano, 1994) with geometrically distributed block lengths, which preserves volatility clustering and momentum through resampling. The two return series are resampled with the *same* index draw, so each resample compares the strategies over an identical bootstrapped history. Lo's (2002) analytic standard error is reported alongside as the optimistic bound.
+
+3. **Multiple testing.** Two corrections apply. Across benchmarks, raw *p*-values are adjusted by the **Holm–Bonferroni** step-down procedure. Across the hyperparameter search, the **Deflated Sharpe Ratio** (Bailey & López de Prado, 2014) discounts the winning Sharpe by the expected maximum of *N* trials of zero skill, using the trial count and cross-trial Sharpe variance recorded in Section 3.5. The **minimum track record length** is also reported, answering directly whether five years of test data is even long enough to detect the observed edge — if it is not, the correct conclusion is to say so rather than to quote the point estimate.
+
+**Table 7.** Planned performance metrics for the PortfolioRL evaluation.
 
 | Category | Metric | Definition / Evaluation Role | Preferred Direction |
 |---|---|---|---|
@@ -350,7 +435,9 @@ Each RL algorithm will be evaluated against every rule-based benchmark under ide
 | Trading | Turnover | Average proportion of portfolio weights changed at each rebalance. | Lower, conditional on performance |
 | Trading | Transaction-cost drag | Difference between gross and net portfolio performance. | Lower |
 | RL training | Episode reward and TD loss | Learning progress, convergence behavior, and value-estimation stability. | Stable improvement |
-| Relative | Excess return / information ratio | Magnitude and consistency of active return relative to each benchmark. | Higher |
+| Relative | Excess return / information ratio | Magnitude and consistency of active return, measured against the 60/40 rebalanced portfolio. | Higher |
+| Significance | Bootstrapped Sharpe difference | 95% interval on the Sharpe gap versus each benchmark, from a stationary block bootstrap. | Excludes zero |
+| Significance | Deflated Sharpe Ratio | Probability the edge survives the number of configurations searched. | Higher; 0.5 means indistinguishable from noise |
 
 ### 4.8 Evaluation Protocol
 
@@ -358,9 +445,11 @@ The following procedure will be used to ensure that the reported comparison is f
 
 1. Train each RL configuration only on the training window and select hyperparameters only from validation performance.
 2. Evaluate the final checkpoint once on the untouched test period, using the same initial portfolio value, transaction costs, and rebalancing rules for all methods.
-3. Repeat stochastic RL experiments with multiple random seeds and report both central tendency and dispersion rather than the best run alone.
-4. Compare the RL agents with buy-and-hold, equal-weight, fixed 60/40, and monthly-rebalanced benchmarks using the complete metric set in Table 10.
-5. Use walk-forward results and bootstrap confidence intervals where feasible to assess whether observed differences are persistent rather than artifacts of a single market interval.
+3. Repeat stochastic RL experiments with multiple matched random seeds and report both central tendency and dispersion rather than the best run alone.
+4. Compare the RL agents with all nine benchmarks defined in Section 1.2 using the complete metric set in Table 7.
+5. Report stationary-bootstrap confidence intervals for every Sharpe difference, Holm–Bonferroni-corrected across benchmarks, and the Deflated Sharpe Ratio for the selected configuration.
+6. Re-run the entire pipeline under walk-forward retraining (expanding training window, one test year at a time, with a two-year validation buffer) to confirm that the result does not depend on a single split.
+7. Re-train at 0, 5, 10 and 20 bps of transaction cost to establish how much of the result survives a worse cost assumption. Retraining rather than re-scoring is essential: re-scoring one policy asks "what if this strategy paid more?", which is not the question.
 
 ### 4.9 Interpretation and Decision Criteria
 
@@ -370,14 +459,58 @@ This framework directly connects evaluation to the original business goal: impro
 
 ---
 
-## 5. References
+## 5. Implementation Status
+
+This section records where the design above is realized in code, and where the delivered implementation departs from the plan. Every departure is listed — a design document that matches the implementation only because the differences were quietly removed is not a useful record.
+
+### 5.1 Where each design element lives
+
+| Design element | Section | Implementation |
+|---|---|---|
+| Data download and feature engineering | 2.3, 3.4 | `src/portfoliorl/data.py`, `features.py`; notebook `01_data_eda.ipynb` |
+| MDP, reward, episode construction | 2.4–2.6 | `src/portfoliorl/env.py`; notebook `02_env_benchmarks.ipynb` |
+| Benchmarks | 1.2 | `src/portfoliorl/benchmarks.py` |
+| Performance metrics | 4.2–4.5 | `src/portfoliorl/metrics.py` |
+| DQN and the 2×2 ablation | 3.2, 3.3 | `src/portfoliorl/agent.py`, `train.py`; notebook `03_dqn_training.ipynb` |
+| Two-stage hyperparameter search | 3.5 | `src/portfoliorl/tuning.py`; notebook `04_tuning.ipynb` |
+| Bootstrap, PSR, DSR, Holm–Bonferroni | 4.7 | `src/portfoliorl/significance.py` |
+| Ablation, cost sweep, walk-forward | 4.8 | `src/portfoliorl/experiments.py`; notebook `05_results_ablation.ipynb` |
+
+### 5.2 Departures from the original plan
+
+| # | Planned | Delivered | Why |
+|---|---|---|---|
+| 1 | Prioritized experience replay as a fourth variant | Dropped; the ablation is a 2×2 factorial over Double and duelling | See Section 3.3. Prioritizing high-TD-error transitions oversamples the periods where the reward signal is least reliable, and the bias correction adds hyperparameters with no clear prior benefit. |
+| 2 | 2010–2024 sample | 2004-11-18 → 2025-12-31 | GLD's inception sets the earliest date at which all four assets exist. Extending backward to it adds the 2008 crisis to the training window, which is the single most valuable stress episode available. |
+| 3 | "SHY or BIL" | SHY only | BIL's May 2007 inception post-dates the start of the sample. |
+| 4 | Calendar (monthly) rebalancing benchmark | Replaced by weekly-rebalanced static allocations plus two adaptive rules | The agent decides weekly, so a monthly benchmark would differ in decision frequency as well as in policy, confounding the comparison. Volatility targeting and trend following are the more demanding comparators. |
+| 5 | Inverse-volatility risk parity benchmark | Implemented, then rejected | With SHY in the universe it degenerates to a near-100% cash position, duplicating the existing all-cash benchmark. |
+| 6 | Stable-Baselines3 | Custom PyTorch implementation | SB3's `DQN` is vanilla only; the ablation is not expressible in it without rewriting the loss. |
+| 7 | Daily rebalancing implied by "daily or weekly steps" | Weekly decisions, daily accounting | Weekly keeps turnover realistic; daily accounting keeps risk measurement honest. |
+| 8 | Reward as written in Section 2.5 | Scaled by 100, drawdown penalized as an increment | Numerical conditioning and avoiding a permanently risk-averse agent, respectively. |
+
+### 5.3 Reproducibility
+
+All five notebooks are committed with outputs. Random seeds are set for NumPy, PyTorch and the environment; the feature scaler is fit on training data only and persisted with the dataset; every figure is written through a single `save_fig` helper to `artifacts/figures/`, and every table to `artifacts/results/`. The `00_run_all.ipynb` notebook re-executes the pipeline from the cached dataset and emits a manifest recording the size and modification time of every artefact, so the committed outputs can be checked against the committed code.
+
+The entire project runs on CPU. The network has roughly 12,800 parameters, and at that size GPU kernel-launch overhead exceeds the arithmetic — the bottleneck is stepping the Python environment, not the matrix multiplications. A full 120,000-step training run takes about five minutes on a laptop CPU.
+
+---
+
+## 6. References
 
 - Akiba, T., Sano, S., Yanase, T., Ohta, T., & Koyama, M. (2019). Optuna: A next-generation hyperparameter optimization framework. *Proceedings of the 25th ACM SIGKDD International Conference on Knowledge Discovery & Data Mining.*
+- Bailey, D. H., & López de Prado, M. (2012). The Sharpe ratio efficient frontier. *Journal of Risk*, 15(2), 3–44.
+- Bailey, D. H., & López de Prado, M. (2014). The deflated Sharpe ratio: Correcting for selection bias, backtest overfitting, and non-normality. *The Journal of Portfolio Management*, 40(5), 94–107.
+- Bergstra, J., & Bengio, Y. (2012). Random search for hyper-parameter optimization. *Journal of Machine Learning Research*, 13, 281–305.
+- Faber, M. T. (2007). A quantitative approach to tactical asset allocation. *The Journal of Wealth Management*, 9(4), 69–79.
 - Jiang, Z., Xu, D., & Liang, J. (2017). A deep reinforcement learning framework for the financial portfolio management problem. *arXiv preprint arXiv:1706.10059.*
 - Lillicrap, T. P., Hunt, J. J., Pritzel, A., Heess, N., Erez, T., Tassa, Y., Silver, D., & Wierstra, D. (2016). Continuous control with deep reinforcement learning. *International Conference on Learning Representations (ICLR).*
+- Lo, A. W. (2002). The statistics of Sharpe ratios. *Financial Analysts Journal*, 58(4), 36–52.
 - Markowitz, H. (1952). Portfolio selection. *The Journal of Finance*, 7(1), 77–91.
 - Mnih, V., Kavukcuoglu, K., Silver, D., Rusu, A. A., Veness, J., Bellemare, M. G., Graves, A., Riedmiller, M., Fidjeland, A. K., Ostrovski, G., Petersen, S., Beattie, C., Sadik, A., Antonoglou, I., King, H., Kumaran, D., Wierstra, D., Legg, S., & Hassabis, D. (2015). Human-level control through deep reinforcement learning. *Nature*, 518(7540), 529–533.
 - Moody, J., & Saffell, M. (2001). Learning to trade via direct reinforcement. *IEEE Transactions on Neural Networks*, 12(4), 875–889.
+- Politis, D. N., & Romano, J. P. (1994). The stationary bootstrap. *Journal of the American Statistical Association*, 89(428), 1303–1313.
 - Schulman, J., Wolski, F., Dhariwal, P., Radford, A., & Klimov, O. (2017). Proximal policy optimization algorithms. *arXiv preprint arXiv:1707.06347.*
 - Sharpe, W. F. (1966). Mutual fund performance. *The Journal of Business*, 39(1), 119–138. https://doi.org/10.1086/294846
 - Sortino, F. A., & Price, L. N. (1994). Performance measurement in a downside risk framework. *The Journal of Investing*, 3(3), 59–64. https://doi.org/10.3905/joi.3.3.59

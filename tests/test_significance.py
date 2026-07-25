@@ -23,8 +23,18 @@ ANNUAL = config.TRADING_DAYS_PER_YEAR
 
 @pytest.fixture
 def iid_returns():
+    """A series with an *exact* daily Sharpe of 0.06 (~0.95 annualised).
+
+    Drawing from ``rng.normal(0.0004, 0.01, 2000)`` is tempting but wrong for a
+    test: the standard error of the sample mean is 0.00022, so the realised
+    Sharpe of any particular draw is essentially a coin flip -- seed 42 gives a
+    *negative* sample mean.  Standardising first makes the moments exact, so the
+    assertions test the estimator rather than the luck of the seed.
+    """
     rng = np.random.default_rng(42)
-    return rng.normal(0.0004, 0.01, 2_000)
+    z = rng.normal(0.0, 1.0, 2_000)
+    z = (z - z.mean()) / z.std(ddof=1)
+    return 0.0006 + 0.01 * z
 
 
 @pytest.fixture
