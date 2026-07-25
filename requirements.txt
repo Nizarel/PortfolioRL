@@ -1,0 +1,35 @@
+# Core scientific stack
+numpy>=2.0
+pandas>=2.2
+scipy>=1.13
+matplotlib>=3.9
+
+# NOTE: no Parquet engine is listed on purpose.  Neither `pyarrow` nor
+# `fastparquet` publishes a cp312-win_arm64 wheel and both fail to build from
+# source without a full CMake/C++ toolchain.  The on-disk data cache therefore
+# uses CSV, which for ~5,300 daily rows costs a few hundred kilobytes and has
+# the side benefit of being diffable and inspectable without Python.
+
+# Market data
+yfinance>=0.2.60
+
+# Reinforcement learning
+gymnasium>=1.0
+
+# PyTorch (CPU build).
+# NOTE (Windows on ARM64): `pip install torch` fails from PyPI on win_arm64.
+# Install torch first from the official index, then install this file:
+#     pip install torch --index-url https://download.pytorch.org/whl/cpu
+#     pip install -r requirements.txt
+torch>=2.4
+
+# Hyperparameter optimisation
+optuna>=4.0
+# Required by optuna.visualization.*.plot_param_importances (fANOVA / MDI backend).
+scikit-learn>=1.5
+
+# Notebooks / tooling
+jupyter>=1.1
+ipykernel>=6.29
+tqdm>=4.66
+pytest>=8.0

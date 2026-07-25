@@ -1,0 +1,15 @@
+{
+  "downloaded_utc": "2026-07-25T16:34:20+00:00",
+  "tickers": [
+    "SPY",
+    "TLT",
+    "GLD",
+    "SHY"
+  ],
+  "requested_start": "2004-11-01",
+  "requested_end": "2025-12-31",
+  "actual_first_date": "2004-11-01",
+  "actual_last_date": "2025-12-31",
+  "n_rows": 5326,
+  "yfinance_auto_adjust": true
+}

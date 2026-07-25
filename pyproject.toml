@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "portfoliorl"
+version = "1.0.0"
+description = "Deep Q-Network agent for dynamic multi-asset portfolio rebalancing"
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Runtime dependencies are pinned in requirements.txt rather than here, because
+# torch on Windows/ARM64 must be installed from a non-PyPI index and that cannot
+# be expressed in project metadata.  See requirements.txt for the install order.
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
