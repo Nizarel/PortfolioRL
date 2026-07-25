@@ -1,0 +1,41 @@
+{
+  "run_name": "dqn_main",
+  "best": {
+    "step": 80000,
+    "val_sharpe": 0.9916628959321132,
+    "val_cagr": 0.12202071010171323,
+    "val_max_drawdown": 0.19492858581832895,
+    "val_final_wealth": 134863.3011072093,
+    "val_action_entropy": 1.2317295573608966,
+    "val_mean_turnover": 0.30347375469114557,
+    "episode": 1538,
+    "checkpoint": "C:\\Github\\PortfolioRL\\artifacts\\models\\dqn_main_seed0.pt"
+  },
+  "wall_time_seconds": 294.3,
+  "episodes": 2307,
+  "gradient_steps": 119001,
+  "agent_config": {
+    "double_dqn": true,
+    "dueling": true,
+    "hidden_sizes": [
+      128,
+      64
+    ],
+    "learning_rate": 0.001,
+    "gamma": 0.99,
+    "buffer_size": 50000,
+    "batch_size": 64,
+    "learning_starts": 1000,
+    "train_freq": 1,
+    "target_update_interval": 500,
+    "tau": 1.0,
+    "eps_start": 1.0,
+    "eps_end": 0.05,
+    "eps_decay_fraction": 0.3,
+    "max_grad_norm": 10.0,
+    "huber_delta": 1.0,
+    "total_steps": 120000,
+    "eval_every": 5000,
+    "seed": 0
+  }
+}

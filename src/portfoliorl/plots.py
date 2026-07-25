@@ -70,7 +70,8 @@ STRATEGY_COLORS: dict[str, str] = {
     "Equity-heavy 80/20": "#9467bd",
     "100% SPY": "#8c564b",
     "All cash (SHY)": "#7f7f7f",
-    "Inverse volatility": "#17becf",
+    "Volatility target": "#17becf",
+    "Trend following": "#dd8452",
     "Random": "#c44e52",
 }
 

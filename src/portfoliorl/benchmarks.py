@@ -20,10 +20,18 @@ The set spans three levels of difficulty:
 ``Static allocations``
     60/40, equal weight, all-equity, all-cash. These are what an investor could
     actually do with no model whatsoever, so they are the honest bar.
-``Inverse volatility``
-    A simple adaptive rule that reacts to the same volatility information the
-    agent sees. If the agent cannot beat this, its advantage is not coming from
-    the state information it was given.
+``Adaptive rules``
+    Volatility targeting and trend following. Both react to the same features
+    the agent sees. If the agent cannot beat these, its advantage is not coming
+    from the state information it was given, and the network is not earning its
+    keep.
+
+A note on what was *not* used: a naive inverse-volatility ("risk parity") rule
+degenerates here. SHY's annualised volatility is about 1.5% against 15-19% for
+the risky assets, so ``1/sigma`` weights put roughly 80% in SHY and the nearest
+discrete allocation is always 100% cash. It would have been indistinguishable
+from the all-cash benchmark while looking deceptively strong on risk-adjusted
+measures. Volatility *targeting* is the meaningful discrete analogue.
 """
 
 from __future__ import annotations
@@ -67,35 +75,79 @@ def random_policy(seed: int = 0, n_actions: int | None = None) -> Policy:
     return policy
 
 
-def inverse_volatility_policy(dataset: features.Dataset, cfg: config.DataConfig | None = None) -> Policy:
-    """Pick the action closest to inverse-volatility ("risk parity") weights.
+def _raw_feature_reader(
+    dataset: features.Dataset, names: list[str]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Locate named features in the observation and return the de-standardising terms.
 
-    The policy sees only the observation, exactly like the agent. It recovers
-    the raw 20-day volatilities by inverting the feature scaler, forms weights
-    proportional to ``1 / sigma_i``, and then snaps to the nearest available
-    discrete allocation in L1 distance -- the best any weight-based rule can do
-    inside this action space.
+    Benchmark policies see exactly what the agent sees -- a scaled observation
+    vector -- so to use a feature in its natural units they must invert the
+    scaler themselves. Doing that here keeps every policy on the same footing.
     """
-    cfg = cfg or config.DEFAULT.data
     scaler = dataset.scaler
     if scaler is None or scaler.mean_ is None or scaler.std_ is None:
-        raise ValueError("inverse_volatility_policy needs a fitted scaler on the dataset")
+        raise ValueError("Adaptive benchmark policies need a fitted scaler on the dataset")
 
     columns = list(scaler.columns_)
-    vol_idx = [columns.index(f"{ticker}_vol20") for ticker in cfg.tickers]
-    mean = scaler.mean_.to_numpy()[vol_idx]
-    std = scaler.std_.to_numpy()[vol_idx]
+    idx = np.array([columns.index(name) for name in names])
+    return idx, scaler.mean_.to_numpy()[idx], scaler.std_.to_numpy()[idx]
+
+
+def volatility_target_policy(
+    dataset: features.Dataset,
+    target_vol: float = 0.10,
+    cfg: config.DataConfig | None = None,
+) -> Policy:
+    """Hold the allocation whose expected volatility is closest to ``target_vol``.
+
+    Volatility targeting is the standard risk-based rule and, unlike naive
+    inverse-volatility weighting, it maps sensibly onto a discrete menu: when
+    markets get choppier every allocation's estimated volatility rises, so the
+    rule slides down the risk dial towards cash and back up again when calm
+    returns.
+
+    The volatility of a candidate allocation is estimated as
+    ``sum_i w_i sigma_i`` -- the perfectly-correlated upper bound -- because the
+    observation carries per-asset volatilities but not a full covariance matrix.
+    The target is calibrated against that same proxy, so the rule is internally
+    consistent; the approximation simply makes it a little more defensive than a
+    covariance-aware version would be.
+    """
+    cfg = cfg or config.DEFAULT.data
+    idx, mean, std = _raw_feature_reader(dataset, [f"{t}_vol20" for t in cfg.tickers])
     allocations = np.asarray(config.ACTION_ALLOCATIONS, dtype=float)
 
     def policy(obs: np.ndarray) -> int:
-        scaled = np.asarray(obs, dtype=float)[vol_idx]
-        vol = scaled * std + mean            # undo standardisation
-        vol = np.maximum(vol, 1e-6)          # volatility cannot be zero or negative
-        target = (1.0 / vol) / np.sum(1.0 / vol)
-        distances = np.abs(allocations - target).sum(axis=1)
-        return int(np.argmin(distances))
+        sigma = np.asarray(obs, dtype=float)[idx] * std + mean  # annualised, raw units
+        sigma = np.maximum(sigma, 1e-6)
+        candidate_vol = allocations @ sigma
+        return int(np.argmin(np.abs(candidate_vol - target_vol)))
 
-    policy.__name__ = "inverse_volatility"
+    policy.__name__ = "volatility_target"
+    return policy
+
+
+def trend_following_policy(
+    dataset: features.Dataset,
+    risk_on: int = 3,
+    risk_off: int = 0,
+    signal_ticker: str = "SPY",
+) -> Policy:
+    """Classic time-series momentum: hold equities while the trend is up, else cash.
+
+    This is the Faber (2007) moving-average rule expressed in the project's
+    action space -- go equity-heavy when the 50-day average is above the 200-day
+    average, retreat to cash when it is not. It is deliberately the crudest
+    possible market-timing rule, which makes it a fair test of whether the agent
+    has learned anything a single threshold could not.
+    """
+    idx, mean, std = _raw_feature_reader(dataset, [f"{signal_ticker}_ma_ratio"])
+
+    def policy(obs: np.ndarray) -> int:
+        ma_ratio = float(np.asarray(obs, dtype=float)[idx][0] * std[0] + mean[0])
+        return risk_on if ma_ratio > 0.0 else risk_off
+
+    policy.__name__ = "trend_following"
     return policy
 
 
@@ -208,7 +260,8 @@ def build_policies(
     policies: dict[str, Policy] = {
         name: constant_action(action) for name, action in STATIC_BENCHMARKS.items()
     }
-    policies["Inverse volatility"] = inverse_volatility_policy(dataset, cfg)
+    policies["Volatility target"] = volatility_target_policy(dataset, cfg=cfg)
+    policies["Trend following"] = trend_following_policy(dataset)
     policies["Random"] = random_policy(seed)
     return policies
 

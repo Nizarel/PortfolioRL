@@ -131,7 +131,7 @@ def test_every_benchmark_runs_and_produces_a_full_price_path(train_dataset):
     results = benchmarks.run_benchmarks(train_dataset, seed=0)
 
     expected = set(benchmarks.STATIC_BENCHMARKS) | set(benchmarks.HOLD_BENCHMARKS)
-    expected |= {"Inverse volatility", "Random"}
+    expected |= {"Volatility target", "Trend following", "Random"}
     assert set(results) == expected
 
     for name, (daily, summary) in results.items():
@@ -175,16 +175,38 @@ def test_rebalancing_and_holding_differ(train_dataset):
     assert difference.max() > 1.0
 
 
-def test_inverse_volatility_policy_favours_the_calmest_assets(train_dataset):
-    policy = benchmarks.inverse_volatility_policy(train_dataset)
-    daily, summary = env.run_policy(train_dataset, policy)
-    chosen = summary["decisions"]["action"]
+def test_volatility_target_policy_derisks_when_markets_get_choppy(train_dataset):
+    """The whole point of the rule: less equity when estimated volatility is high.
 
-    assert chosen.between(0, len(config.ACTION_ALLOCATIONS) - 1).all()
-    # SHY is by far the least volatile asset in the synthetic data, so an
-    # inverse-volatility rule should concentrate on the cash-like allocations.
-    shy_weight = np.asarray(config.ACTION_ALLOCATIONS)[chosen.to_numpy(), 3]
-    assert shy_weight.mean() > 0.4
+    Driven with synthetic observations rather than the price fixture, whose
+    per-asset volatilities are constant by construction and so contain no
+    regimes for the rule to react to.
+    """
+    scaler = train_dataset.scaler
+    policy = benchmarks.volatility_target_policy(train_dataset, target_vol=0.10)
+
+    def observation(vols: dict[str, float]) -> np.ndarray:
+        raw = scaler.mean_.copy()  # every other feature at its training mean
+        for ticker, value in vols.items():
+            raw[f"{ticker}_vol20"] = value
+        scaled = (raw - scaler.mean_) / scaler.std_
+        return np.concatenate([scaled.to_numpy(), np.zeros(8)])
+
+    calm = policy(observation({"SPY": 0.08, "TLT": 0.06, "GLD": 0.07, "SHY": 0.01}))
+    normal = policy(observation({"SPY": 0.16, "TLT": 0.13, "GLD": 0.15, "SHY": 0.02}))
+    stress = policy(observation({"SPY": 0.45, "TLT": 0.25, "GLD": 0.30, "SHY": 0.03}))
+
+    equity = np.asarray(config.ACTION_ALLOCATIONS)[:, 0]
+    assert equity[calm] > equity[normal] > equity[stress]
+    assert stress == 0, "A volatility shock should push the rule all the way to cash"
+
+
+def test_trend_following_policy_switches_on_the_moving_average_signal(train_dataset):
+    policy = benchmarks.trend_following_policy(train_dataset, risk_on=3, risk_off=0)
+    _, summary = env.run_policy(train_dataset, policy)
+    chosen = set(summary["decisions"]["action"].unique())
+
+    assert chosen == {0, 3}, "The rule is binary by construction"
 
 
 def test_random_policy_is_seed_reproducible_and_actually_random(train_dataset):
