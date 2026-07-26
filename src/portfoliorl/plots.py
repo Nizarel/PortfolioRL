@@ -220,12 +220,35 @@ def annotate_crises(
     Used wherever the point of the chart is "look how the assets behave when
     conditions change" -- which is the entire premise of a regime-switching
     allocation policy.
+
+    Windows that fall outside the data already plotted are skipped, and windows
+    that straddle the edge are clipped, so that shading a test-split chart with
+    the full crisis list does not silently stretch the axis back to 2007 and
+    squash the actual data into a corner.
     """
-    for start, end, name in windows or CRISIS_WINDOWS:
-        ax.axvspan(pd.Timestamp(start), pd.Timestamp(end), color="firebrick", alpha=alpha, lw=0)
-        if label:
+    windows = tuple(windows or CRISIS_WINDOWS)
+
+    if not ax.has_data():
+        # nothing plotted yet, so there is no range to clip against
+        for start, end, name in windows:
+            ax.axvspan(pd.Timestamp(start), pd.Timestamp(end),
+                       color="firebrick", alpha=alpha, lw=0)
+        return
+
+    x_lo, x_hi = ax.get_xlim()
+    lo = pd.Timestamp(mdates.num2date(x_lo)).tz_localize(None)
+    hi = pd.Timestamp(mdates.num2date(x_hi)).tz_localize(None)
+
+    for start, end, name in windows:
+        window_start, window_end = pd.Timestamp(start), pd.Timestamp(end)
+        if window_end < lo or window_start > hi:
+            continue
+        window_start, window_end = max(window_start, lo), min(window_end, hi)
+        ax.axvspan(window_start, window_end, color="firebrick", alpha=alpha, lw=0)
+        # a sliver of a window left after clipping has no room for its label
+        if label and (window_end - window_start) > pd.Timedelta(days=45):
             ax.text(
-                pd.Timestamp(start),
+                window_start,
                 label_y,
                 f" {name}",
                 transform=ax.get_xaxis_transform(),
@@ -234,6 +257,8 @@ def annotate_crises(
                 fontsize=8,
                 color="firebrick",
             )
+
+    ax.set_xlim(x_lo, x_hi)
 
 
 def format_pct_axis(ax: plt.Axes, axis: str = "y", decimals: int = 0) -> None:

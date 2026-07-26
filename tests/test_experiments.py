@@ -199,3 +199,107 @@ def test_manifest_records_size_and_timestamp(tmp_path):
     assert len(entries) == 1
     assert entries[0]["bytes"] == f.stat().st_size
     assert "modified" in entries[0]
+
+# --------------------------------------------------------------------------- #
+# Crash resumability
+# --------------------------------------------------------------------------- #
+def _fake_curve() -> pd.DataFrame:
+    idx = pd.bdate_range("2021-01-01", periods=10)
+    return pd.DataFrame({"wealth": np.linspace(1.0, 1.1, 10), "return": 0.001}, index=idx)
+
+
+class TestResume:
+    """A full ablation is ~50 training runs.
+
+    Losing all of it to a kernel death at run 45 is the failure mode these tests
+    exist to prevent -- and it is not hypothetical, it happened once during
+    development.
+    """
+
+    def test_a_journalled_run_is_not_retrained(self, dataset):
+        """The recovered row must survive verbatim into the final table.
+
+        A sentinel value that no real training run could produce proves the row
+        came from the journal rather than from a repeat of the work.
+        """
+        tag = "unit_resume"
+        sentinel = {
+            "variant": "Vanilla DQN", "seed": 0,
+            "double_dqn": False, "dueling": False,
+            "selected_step": 999, "wall_time": 1.0,
+            "val_sharpe": -12.5, "test_sharpe": -12.5,
+        }
+        experiments._record_progress(tag, sentinel, _fake_curve())
+
+        res = experiments.run_variant_seeds(
+            dataset, variants=TWO_VARIANTS, seeds=(0,), tag=tag,
+            progress=None, **TINY,
+        )
+
+        assert len(res.table) == 2
+        recovered = res.table[res.table["variant"] == "Vanilla DQN"].iloc[0]
+        assert recovered["test_sharpe"] == -12.5
+        assert recovered["selected_step"] == 999
+
+    def test_the_journal_is_removed_once_the_result_csv_exists(self, dataset):
+        tag = "unit_journal_cleanup"
+        experiments.run_variant_seeds(
+            dataset, variants=TWO_VARIANTS, seeds=(0,), tag=tag,
+            progress=None, **TINY,
+        )
+        assert experiments.ExperimentResults.exists(tag)
+        assert not experiments._progress_path(tag).exists()
+
+    def test_a_torn_final_line_does_not_lose_the_good_rows(self):
+        """A process killed mid-write leaves a partial JSON line."""
+        tag = "unit_torn"
+        experiments._record_progress(
+            tag, {"variant": "A", "seed": 0, "test_sharpe": 1.0}, _fake_curve()
+        )
+        with experiments._progress_path(tag).open("a", encoding="utf-8") as handle:
+            handle.write('{"variant": "B", "seed": 0, "test_sh')
+
+        rows, curves = experiments._load_progress(tag)
+        assert len(rows) == 1
+        assert rows[0]["variant"] == "A"
+        assert len(curves) == 1
+
+    def test_a_journal_entry_whose_curve_is_missing_is_discarded(self):
+        """Curve is written before the journal line, so this should not happen --
+        but a half-deleted cache directory would produce it."""
+        tag = "unit_orphan"
+        experiments._record_progress(
+            tag, {"variant": "A", "seed": 0, "test_sharpe": 1.0}, _fake_curve()
+        )
+        experiments._curve_path(tag, "A", 0).unlink()
+
+        rows, curves = experiments._load_progress(tag)
+        assert rows == []
+        assert curves == {}
+
+    def test_force_discards_a_previous_partial_run(self, dataset):
+        tag = "unit_force"
+        experiments._record_progress(
+            tag,
+            {"variant": "Vanilla DQN", "seed": 0, "test_sharpe": -99.0},
+            _fake_curve(),
+        )
+        res = experiments.run_variant_seeds(
+            dataset, variants=TWO_VARIANTS, seeds=(0,), tag=tag,
+            force=True, progress=None, **TINY,
+        )
+        assert (res.table["test_sharpe"] != -99.0).all()
+
+    def test_cost_sweep_resumes_too(self, dataset):
+        tag = "unit_cost_resume"
+        experiments._record_progress(
+            tag,
+            {"variant": "0 bps", "cost_bps": 0.0, "seed": 0, "test_sharpe": -7.5},
+            _fake_curve(),
+        )
+        res = experiments.cost_sweep(
+            dataset, cost_bps=(0, 10), seeds=(0,), tag=tag,
+            progress=None, **TINY,
+        )
+        assert len(res.table) == 2
+        assert res.table.loc[res.table["variant"] == "0 bps", "test_sharpe"].iloc[0] == -7.5

@@ -1,0 +1,78 @@
+{
+  "config_source": "notebook 04 search",
+  "agent": {
+    "double_dqn": true,
+    "dueling": true,
+    "hidden_sizes": [
+      128,
+      64
+    ],
+    "learning_rate": 0.0006709527037318491,
+    "gamma": 0.9830282035495189,
+    "buffer_size": 50000,
+    "batch_size": 64,
+    "learning_starts": 1000,
+    "train_freq": 1,
+    "target_update_interval": 1000,
+    "tau": 1.0,
+    "eps_start": 1.0,
+    "eps_end": 0.05,
+    "eps_decay_fraction": 0.418937759678715,
+    "max_grad_norm": 10.0,
+    "huber_delta": 1.0,
+    "total_steps": 120000,
+    "eval_every": 5000,
+    "seed": 0
+  },
+  "env": {
+    "transaction_cost_bps": 5.0,
+    "lambda_drawdown": 0.1787888520914185
+  },
+  "test_window": [
+    "2021-01-04",
+    "2025-12-31"
+  ],
+  "headline": {
+    "sharpe": 0.1406683599172283,
+    "cagr": 0.04290519461720832,
+    "max_drawdown": 0.2645323530643193,
+    "final_wealth": 117598.40701893097,
+    "action_entropy": 1.4652155822497703
+  },
+  "inference": {
+    "Test Sharpe": 0.1406683599172283,
+    "Lo (2002) standard error": 0.4483489059262328,
+    "Probabilistic Sharpe (vs 0)": 0.8073143653870083,
+    "Probabilistic Sharpe (vs 60/40)": 0.6378103902952453,
+    "Configurations evaluated": 72.0,
+    "Variance of trial Sharpes": 0.08537078976945404,
+    "Expected max Sharpe from noise": 0.7049732778085359,
+    "Deflated Sharpe Ratio": 0.23821301941502598,
+    "Minimum track record (days)": 4500.082700409903,
+    "Test split length (days)": 1254.0
+  },
+  "ablation": {
+    "seeds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "steps": 60000
+  },
+  "sweeps": {
+    "cost_seeds": [
+      0,
+      1,
+      2
+    ],
+    "wf_seeds": [
+      0,
+      1,
+      2
+    ],
+    "steps": 40000
+  }
+}

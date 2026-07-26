@@ -61,6 +61,72 @@ def _curve_path(tag: str, label: str, seed: int) -> Path:
     return CURVE_DIR / f"{tag}__{safe}__seed{seed}.csv"
 
 
+# --------------------------------------------------------------------------- #
+# Crash resumability
+#
+# A full ablation is ~50 training runs and over an hour of CPU. Holding all of
+# it in memory until the final ``save()`` means a kernel death at run 45 costs
+# everything. Each finished run is therefore appended to a progress journal the
+# moment it completes, and a restarted run skips whatever the journal already
+# contains. The journal is deleted once the real result CSV is written, so it
+# only ever exists while a run is in flight or after one has died.
+# --------------------------------------------------------------------------- #
+def _progress_path(tag: str) -> Path:
+    return CURVE_DIR / f"{tag}.progress.jsonl"
+
+
+def _load_progress(tag: str) -> tuple[list[dict[str, Any]], dict[str, pd.DataFrame]]:
+    """Recover rows and curves from a run that did not finish."""
+    path = _progress_path(tag)
+    if not path.exists():
+        return [], {}
+
+    rows: list[dict[str, Any]] = []
+    curves: dict[str, pd.DataFrame] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            # a torn final line means the process died mid-write; everything
+            # before it is still good
+            break
+        curve_path = _curve_path(tag, str(row["variant"]), int(row["seed"]))
+        if not curve_path.exists():
+            continue
+        rows.append(row)
+        curves[f"{row['variant']}|{row['seed']}"] = pd.read_csv(
+            curve_path, index_col=0, parse_dates=True
+        )
+    return rows, curves
+
+
+def _record_progress(tag: str, row: Mapping[str, Any], curve: pd.DataFrame) -> None:
+    """Persist one finished run. Curve first, so the journal never claims a
+    result whose curve is missing."""
+    CURVE_DIR.mkdir(parents=True, exist_ok=True)
+    curve.to_csv(_curve_path(tag, str(row["variant"]), int(row["seed"])))
+    with _progress_path(tag).open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(dict(row), default=str) + "\n")
+
+
+def _clear_progress(tag: str) -> None:
+    _progress_path(tag).unlink(missing_ok=True)
+
+
+def _resume(
+    tag: str, force: bool, progress: Callable[[str], None] | None
+) -> tuple[list[dict[str, Any]], dict[str, pd.DataFrame], set[tuple[str, int]]]:
+    if force:
+        _clear_progress(tag)
+        return [], {}, set()
+    rows, curves = _load_progress(tag)
+    if rows and progress:
+        progress(f"resuming {tag}: {len(rows)} run(s) recovered from a previous attempt")
+    return rows, curves, {(str(r["variant"]), int(r["seed"])) for r in rows}
+
+
 @dataclass
 class ExperimentResults:
     """One tidy table plus the daily wealth curve behind every row."""
@@ -168,13 +234,15 @@ def run_variant_seeds(
 
     train_ds, valid_ds, test_ds = (dataset.split(s) for s in ("train", "valid", "test"))
 
-    rows: list[dict[str, Any]] = []
-    curves: dict[str, pd.DataFrame] = {}
+    rows, curves, already_done = _resume(tag, force, progress)
     total = len(variants) * len(seeds)
     started = time.perf_counter()
+    completed_here = 0
 
     for i, (label, flags) in enumerate(variants.items()):
         for j, seed in enumerate(seeds):
+            if (label, seed) in already_done:
+                continue
             cfg_i = variant_config(
                 double=flags["double"], dueling=flags["dueling"],
                 total_steps=total_steps, eval_every=eval_every, seed=seed, **overrides
@@ -196,10 +264,12 @@ def run_variant_seeds(
             row.update(test_metrics)
             rows.append(row)
             curves[f"{label}|{seed}"] = test_daily
+            _record_progress(tag, row, test_daily)
+            completed_here += 1
 
             if progress:
-                done = i * len(seeds) + j + 1
-                eta = (time.perf_counter() - started) / done * (total - done)
+                done = len(rows)
+                eta = (time.perf_counter() - started) / completed_here * (total - done)
                 progress(
                     f"  [{done:>2}/{total}] {label:<20} seed {seed}  "
                     f"val {row['val_sharpe']:+.2f}  test {row['test_sharpe']:+.2f}  "
@@ -208,6 +278,7 @@ def run_variant_seeds(
 
     out = ExperimentResults(tag=tag, table=pd.DataFrame(rows), curves=curves)
     out.save()
+    _clear_progress(tag)
     return out
 
 
@@ -240,11 +311,14 @@ def cost_sweep(
         return ExperimentResults.load(tag)
 
     train_ds, valid_ds, test_ds = (dataset.split(s) for s in ("train", "valid", "test"))
-    rows, curves = [], {}
+    rows, curves, already_done = _resume(tag, force, progress)
 
     for bps in cost_bps:
         env_cfg = replace(config.DEFAULT.env, transaction_cost_bps=bps)
+        label = f"{bps:.0f} bps"
         for seed in seeds:
+            if (label, seed) in already_done:
+                continue
             cfg_i = variant_config(double=True, dueling=True, total_steps=total_steps,
                                    eval_every=eval_every, seed=seed)
             result = train.train_dqn(
@@ -253,9 +327,10 @@ def cost_sweep(
                 save_checkpoints=False, write_log=False, progress=None,
             )
             test_metrics, test_daily = _evaluate_split(result.agent, test_ds, env_cfg, "test")
-            label = f"{bps:.0f} bps"
-            rows.append({"variant": label, "cost_bps": bps, "seed": seed, **test_metrics})
+            row = {"variant": label, "cost_bps": bps, "seed": seed, **test_metrics}
+            rows.append(row)
             curves[f"{label}|{seed}"] = test_daily
+            _record_progress(tag, row, test_daily)
             if progress:
                 progress(f"  {label:>7}  seed {seed}  test Sharpe "
                          f"{test_metrics['test_sharpe']:+.2f}  turnover "
@@ -263,6 +338,7 @@ def cost_sweep(
 
     out = ExperimentResults(tag=tag, table=pd.DataFrame(rows), curves=curves)
     out.save()
+    _clear_progress(tag)
     return out
 
 
@@ -337,14 +413,20 @@ def walk_forward(
         return ExperimentResults.load(tag)
 
     env_cfg = env_cfg or config.DEFAULT.env
-    rows, curves = [], {}
+    rows, curves, already_done = _resume(tag, force, progress)
 
     for fold in walk_forward_folds(dataset, **fold_kwargs):
+        label = str(fold["fold"])
+        if all((label, seed) in already_done for seed in seeds):
+            continue
+
         tr = _slice(dataset, None, fold["train_end"])
         va = _slice(dataset, fold["valid_start"], fold["valid_end"])
         te = _slice(dataset, fold["test_start"], fold["test_end"])
 
         for seed in seeds:
+            if (label, seed) in already_done:
+                continue
             cfg_i = variant_config(double=True, dueling=True, total_steps=total_steps,
                                    eval_every=eval_every, seed=seed)
             result = train.train_dqn(
@@ -353,16 +435,15 @@ def walk_forward(
                 save_checkpoints=False, write_log=False, progress=None,
             )
             test_metrics, test_daily = _evaluate_split(result.agent, te, env_cfg, "test")
-            label = str(fold["fold"])
-            rows.append(
-                {
-                    "variant": label, "seed": seed,
-                    "train_days": len(tr.dates), "test_days": len(te.dates),
-                    **{k: v for k, v in fold.items() if k != "fold"},
-                    **test_metrics,
-                }
-            )
+            row = {
+                "variant": label, "seed": seed,
+                "train_days": len(tr.dates), "test_days": len(te.dates),
+                **{k: v for k, v in fold.items() if k != "fold"},
+                **test_metrics,
+            }
+            rows.append(row)
             curves[f"{label}|{seed}"] = test_daily
+            _record_progress(tag, row, test_daily)
             if progress:
                 progress(f"  fold {label}  seed {seed}  "
                          f"train to {fold['train_end']}  "
@@ -370,6 +451,7 @@ def walk_forward(
 
     out = ExperimentResults(tag=tag, table=pd.DataFrame(rows), curves=curves)
     out.save()
+    _clear_progress(tag)
     return out
 
 

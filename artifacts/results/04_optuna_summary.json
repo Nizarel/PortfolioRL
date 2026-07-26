@@ -1,0 +1,37 @@
+{
+  "study_name": "portfoliorl_v1",
+  "direction": "MAXIMIZE",
+  "n_trials": 30,
+  "trial_states": {
+    "PRUNED": 19,
+    "COMPLETE": 11
+  },
+  "best_value": 1.9872835611198,
+  "best_trial": 28,
+  "best_params": {
+    "learning_rate": 0.0006709527037318491,
+    "gamma": 0.9830282035495189,
+    "hidden_sizes": "128,64",
+    "batch_size": 64,
+    "target_update_interval": 1000,
+    "eps_decay_fraction": 0.418937759678715,
+    "lambda_drawdown": 0.1787888520914185
+  },
+  "best_user_attrs": {
+    "seconds": 46.3,
+    "step": 8000,
+    "val_action_entropy": 1.3739009462957992,
+    "val_cagr": 0.18046199512929584,
+    "val_max_drawdown": 0.07761776492404815,
+    "val_mean_turnover": 0.22489964316566866
+  },
+  "search_space": {
+    "learning_rate": "log-uniform 1e-4 to 5e-3 -- the single most influential knob",
+    "gamma": "0.90 to 0.995 -- effective horizon 10 to 200 weeks",
+    "hidden_sizes": "3 discrete widths -- capacity, bounded by 620 training decisions",
+    "batch_size": "32/64/128 -- gradient-noise scale",
+    "target_update_interval": "250/500/1000 -- how stale the bootstrap target is",
+    "eps_decay_fraction": "0.1 to 0.5 -- how long exploration lasts",
+    "lambda_drawdown": "0.0 to 1.0 -- how strongly new drawdowns are punished"
+  }
+}
