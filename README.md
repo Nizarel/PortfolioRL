@@ -153,7 +153,7 @@ notebooks/
   04_tuning.ipynb            the hyperparameters were searched, not guessed
   05_results_ablation.ipynb  the result, the ablation, and whether it is significant
 
-tests/       112 tests, no network access required
+tests/       135 tests, no network access required
 artifacts/   figures, results, models, logs (committed)
 Docs/        design document and implementation plan
 ```
@@ -202,10 +202,31 @@ training runs.
 - [x] DQN agent, training loop, 2×2 ablation
 - [x] Two-stage hyperparameter search (grid + Optuna TPE)
 - [x] Significance testing and experiment orchestration
-- [x] Notebooks 01–03 executed end to end
+- [x] Notebooks 01–05 and 00 executed end to end
 - [x] Design document updated to match the implementation
-- [ ] Notebooks 04, 05 and 00 executed end to end
-- [ ] Final report and submission package
+- [x] Assignment 4 progress report (`Docs/PortfolioRL_ProjectAssignment4.md`)
+- [ ] Final report, experience statement, and video presentation
+
+### Headline finding
+
+The agent does **not** beat the benchmarks. On the held-out 2021–2025 test split
+it ranks eighth of ten on excess Sharpe (0.141), beating only the random floor
+and all-cash. No benchmark comparison survives Holm–Bonferroni; the Deflated
+Sharpe Ratio is 0.238, because the expected maximum Sharpe from 72 searched
+configurations of pure noise (0.705) exceeds the Sharpe actually obtained
+(0.387 raw); and the minimum track record length (4,500 days) is 3.6× longer
+than the test split (1,254 days).
+
+Three mechanisms explain it, each traceable to an artefact: poor allocation
+choice aggravated by cost drag (9.43× annual turnover consuming 4.69% of wealth,
+≈0.94%/yr — real but secondary, since adding it back still leaves the agent below
+every static allocation); a validation/test Sharpe correlation of **−0.365**,
+meaning checkpoint and configuration selection actively hurt; and regime
+staleness — walk-forward retraining lifts the mean raw Sharpe to ≈1.00,
+implicating the frozen 2017 training cut-off rather than the algorithm.
+
+This is the null result the project was built to be able to report. See
+`Docs/PortfolioRL_ProjectAssignment4.md` §7.
 
 ---
 
@@ -222,4 +243,3 @@ Bailey & López de Prado (2014) *The deflated Sharpe ratio* ·
 Faber (2007) *A quantitative approach to tactical asset allocation* ·
 Sutton & Barto (2018) *Reinforcement Learning: An Introduction*
 
-Full list in [Docs/PortfolioRL_ProjectAssignment3.md](Docs/PortfolioRL_ProjectAssignment3.md).

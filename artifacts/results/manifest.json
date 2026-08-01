@@ -1,0 +1,382 @@
+[
+  {
+    "path": "artifacts\\figures\\00_01_pipeline.png",
+    "bytes": 91692,
+    "modified": "2026-08-01 15:53:02"
+  },
+  {
+    "path": "artifacts\\figures\\00_02_contact_sheet.png",
+    "bytes": 2408139,
+    "modified": "2026-08-01 15:34:30"
+  },
+  {
+    "path": "artifacts\\figures\\01_01_asset_growth.png",
+    "bytes": 157843,
+    "modified": "2026-07-25 09:44:26"
+  },
+  {
+    "path": "artifacts\\figures\\01_02_data_coverage.png",
+    "bytes": 30917,
+    "modified": "2026-07-25 09:44:26"
+  },
+  {
+    "path": "artifacts\\figures\\01_03_daily_returns.png",
+    "bytes": 206079,
+    "modified": "2026-07-25 09:44:28"
+  },
+  {
+    "path": "artifacts\\figures\\01_04_return_distributions.png",
+    "bytes": 146204,
+    "modified": "2026-07-25 09:44:30"
+  },
+  {
+    "path": "artifacts\\figures\\01_05_stock_bond_correlation.png",
+    "bytes": 130892,
+    "modified": "2026-07-25 09:44:32"
+  },
+  {
+    "path": "artifacts\\figures\\01_06_split_correlations.png",
+    "bytes": 94327,
+    "modified": "2026-07-25 09:44:32"
+  },
+  {
+    "path": "artifacts\\figures\\01_07_rolling_volatility.png",
+    "bytes": 231924,
+    "modified": "2026-07-25 09:44:33"
+  },
+  {
+    "path": "artifacts\\figures\\01_08_drawdowns.png",
+    "bytes": 217984,
+    "modified": "2026-07-25 09:44:34"
+  },
+  {
+    "path": "artifacts\\figures\\01_09_momentum_regimes.png",
+    "bytes": 49946,
+    "modified": "2026-07-25 09:44:35"
+  },
+  {
+    "path": "artifacts\\figures\\01_10_trend_state.png",
+    "bytes": 202465,
+    "modified": "2026-07-25 09:44:36"
+  },
+  {
+    "path": "artifacts\\figures\\01_11_feature_correlations.png",
+    "bytes": 100134,
+    "modified": "2026-07-25 09:44:38"
+  },
+  {
+    "path": "artifacts\\figures\\01_12_lookahead_demo.png",
+    "bytes": 115974,
+    "modified": "2026-07-25 09:44:36"
+  },
+  {
+    "path": "artifacts\\figures\\01_13_split_protocol.png",
+    "bytes": 87309,
+    "modified": "2026-07-25 09:44:37"
+  },
+  {
+    "path": "artifacts\\figures\\01_14_scaling_effect.png",
+    "bytes": 80515,
+    "modified": "2026-07-25 09:44:39"
+  },
+  {
+    "path": "artifacts\\figures\\02_01_mdp_loop.png",
+    "bytes": 69582,
+    "modified": "2026-07-25 10:30:50"
+  },
+  {
+    "path": "artifacts\\figures\\02_02_weight_drift.png",
+    "bytes": 256516,
+    "modified": "2026-07-25 10:30:51"
+  },
+  {
+    "path": "artifacts\\figures\\02_03_golden_test.png",
+    "bytes": 212930,
+    "modified": "2026-07-25 10:30:52"
+  },
+  {
+    "path": "artifacts\\figures\\02_04_reward_decomposition.png",
+    "bytes": 113651,
+    "modified": "2026-07-25 10:30:53"
+  },
+  {
+    "path": "artifacts\\figures\\02_05_episode_sampler.png",
+    "bytes": 63221,
+    "modified": "2026-07-25 10:31:14"
+  },
+  {
+    "path": "artifacts\\figures\\02_06_benchmark_equity.png",
+    "bytes": 384414,
+    "modified": "2026-07-25 10:31:15"
+  },
+  {
+    "path": "artifacts\\figures\\02_07_turnover_cost.png",
+    "bytes": 118405,
+    "modified": "2026-07-25 10:31:16"
+  },
+  {
+    "path": "artifacts\\figures\\02_08_random_floor.png",
+    "bytes": 70451,
+    "modified": "2026-07-25 10:31:19"
+  },
+  {
+    "path": "artifacts\\figures\\03_01_architecture.png",
+    "bytes": 61475,
+    "modified": "2026-07-25 16:03:06"
+  },
+  {
+    "path": "artifacts\\figures\\03_02_episode_reward.png",
+    "bytes": 128036,
+    "modified": "2026-07-25 16:08:01"
+  },
+  {
+    "path": "artifacts\\figures\\03_03_td_loss.png",
+    "bytes": 157052,
+    "modified": "2026-07-25 16:08:02"
+  },
+  {
+    "path": "artifacts\\figures\\03_04_q_values.png",
+    "bytes": 90806,
+    "modified": "2026-07-25 16:08:03"
+  },
+  {
+    "path": "artifacts\\figures\\03_05_epsilon_entropy.png",
+    "bytes": 73691,
+    "modified": "2026-07-25 16:08:03"
+  },
+  {
+    "path": "artifacts\\figures\\03_06_action_mix.png",
+    "bytes": 116763,
+    "modified": "2026-07-25 16:08:04"
+  },
+  {
+    "path": "artifacts\\figures\\03_07_validation_selection.png",
+    "bytes": 115299,
+    "modified": "2026-07-25 16:08:05"
+  },
+  {
+    "path": "artifacts\\figures\\03_08_reward_scale.png",
+    "bytes": 126914,
+    "modified": "2026-07-25 16:10:13"
+  },
+  {
+    "path": "artifacts\\figures\\03_09_episode_sampler_ablation.png",
+    "bytes": 116215,
+    "modified": "2026-07-25 16:12:54"
+  },
+  {
+    "path": "artifacts\\figures\\03_10_validation_equity.png",
+    "bytes": 114245,
+    "modified": "2026-07-25 16:12:55"
+  },
+  {
+    "path": "artifacts\\figures\\04_01_grid_heatmap.png",
+    "bytes": 86736,
+    "modified": "2026-07-31 16:54:45"
+  },
+  {
+    "path": "artifacts\\figures\\04_02_optuna_history.png",
+    "bytes": 49791,
+    "modified": "2026-07-31 16:54:46"
+  },
+  {
+    "path": "artifacts\\figures\\04_03_param_importances.png",
+    "bytes": 60981,
+    "modified": "2026-07-31 16:54:51"
+  },
+  {
+    "path": "artifacts\\figures\\04_04_parallel_coordinate.png",
+    "bytes": 223422,
+    "modified": "2026-07-31 16:54:52"
+  },
+  {
+    "path": "artifacts\\figures\\04_05_slice.png",
+    "bytes": 60644,
+    "modified": "2026-07-31 16:54:53"
+  },
+  {
+    "path": "artifacts\\figures\\04_06_pruning.png",
+    "bytes": 48247,
+    "modified": "2026-07-31 16:54:53"
+  },
+  {
+    "path": "artifacts\\figures\\04_07_pareto.png",
+    "bytes": 70061,
+    "modified": "2026-07-31 16:54:53"
+  },
+  {
+    "path": "artifacts\\figures\\05_01_equity_curves.png",
+    "bytes": 310952,
+    "modified": "2026-07-31 18:15:14"
+  },
+  {
+    "path": "artifacts\\figures\\05_02_underwater.png",
+    "bytes": 212115,
+    "modified": "2026-07-31 18:15:15"
+  },
+  {
+    "path": "artifacts\\figures\\05_03_rolling_sharpe.png",
+    "bytes": 161972,
+    "modified": "2026-07-31 18:15:15"
+  },
+  {
+    "path": "artifacts\\figures\\05_04_allocation_over_time.png",
+    "bytes": 170973,
+    "modified": "2026-07-31 18:15:16"
+  },
+  {
+    "path": "artifacts\\figures\\05_05_action_usage.png",
+    "bytes": 87769,
+    "modified": "2026-07-31 18:15:16"
+  },
+  {
+    "path": "artifacts\\figures\\05_06_seed_dispersion.png",
+    "bytes": 56548,
+    "modified": "2026-07-31 18:15:17"
+  },
+  {
+    "path": "artifacts\\figures\\05_07_ablation_bars.png",
+    "bytes": 57093,
+    "modified": "2026-07-31 18:15:18"
+  },
+  {
+    "path": "artifacts\\figures\\05_08_tuning_vs_budget.png",
+    "bytes": 133150,
+    "modified": "2026-07-31 18:16:10"
+  },
+  {
+    "path": "artifacts\\figures\\05_09_risk_return.png",
+    "bytes": 107257,
+    "modified": "2026-07-31 18:15:19"
+  },
+  {
+    "path": "artifacts\\figures\\05_10_bootstrap_significance.png",
+    "bytes": 105518,
+    "modified": "2026-07-31 18:16:22"
+  },
+  {
+    "path": "artifacts\\figures\\05_11_cost_sensitivity.png",
+    "bytes": 109361,
+    "modified": "2026-07-31 18:16:24"
+  },
+  {
+    "path": "artifacts\\figures\\05_12_walk_forward.png",
+    "bytes": 52287,
+    "modified": "2026-07-31 18:16:24"
+  },
+  {
+    "path": "artifacts\\figures\\05_13_return_waterfall.png",
+    "bytes": 52590,
+    "modified": "2026-07-31 18:16:24"
+  },
+  {
+    "path": "artifacts\\models\\05_headline_seed0.pt",
+    "bytes": 109441,
+    "modified": "2026-07-25 17:01:57"
+  },
+  {
+    "path": "artifacts\\models\\dqn_main_seed0.pt",
+    "bytes": 109397,
+    "modified": "2026-07-25 16:06:12"
+  },
+  {
+    "path": "artifacts\\models\\refit_default_seed0.pt",
+    "bytes": 109507,
+    "modified": "2026-07-26 22:12:52"
+  },
+  {
+    "path": "artifacts\\models\\refit_tuned_seed0.pt",
+    "bytes": 109441,
+    "modified": "2026-07-25 16:56:14"
+  },
+  {
+    "path": "artifacts\\results\\02_benchmark_scorecard_test.csv",
+    "bytes": 2951,
+    "modified": "2026-07-25 10:31:20"
+  },
+  {
+    "path": "artifacts\\results\\03_reward_scale_ablation.csv",
+    "bytes": 290,
+    "modified": "2026-07-25 16:10:14"
+  },
+  {
+    "path": "artifacts\\results\\03_training_run.json",
+    "bytes": 1045,
+    "modified": "2026-07-25 16:12:56"
+  },
+  {
+    "path": "artifacts\\results\\03_validation_scorecard.csv",
+    "bytes": 3852,
+    "modified": "2026-07-25 16:12:54"
+  },
+  {
+    "path": "artifacts\\results\\04_best_config.json",
+    "bytes": 803,
+    "modified": "2026-07-31 16:54:54"
+  },
+  {
+    "path": "artifacts\\results\\04_best_config.PRERUN.json",
+    "bytes": 803,
+    "modified": "2026-07-25 17:00:34"
+  },
+  {
+    "path": "artifacts\\results\\04_coarse_grid.csv",
+    "bytes": 2119,
+    "modified": "2026-07-26 16:47:23"
+  },
+  {
+    "path": "artifacts\\results\\04_optuna_summary.json",
+    "bytes": 1300,
+    "modified": "2026-07-31 16:54:54"
+  },
+  {
+    "path": "artifacts\\results\\04_refit_comparison.csv",
+    "bytes": 295,
+    "modified": "2026-07-25 17:00:34"
+  },
+  {
+    "path": "artifacts\\results\\05_ablation.csv",
+    "bytes": 10599,
+    "modified": "2026-07-25 22:41:48"
+  },
+  {
+    "path": "artifacts\\results\\05_ablation_paired_tests.csv",
+    "bytes": 615,
+    "modified": "2026-07-31 18:16:25"
+  },
+  {
+    "path": "artifacts\\results\\05_config_comparison.csv",
+    "bytes": 5412,
+    "modified": "2026-07-31 17:44:16"
+  },
+  {
+    "path": "artifacts\\results\\05_cost_sweep.csv",
+    "bytes": 2625,
+    "modified": "2026-07-25 23:01:33"
+  },
+  {
+    "path": "artifacts\\results\\05_significance.csv",
+    "bytes": 1105,
+    "modified": "2026-07-31 18:16:25"
+  },
+  {
+    "path": "artifacts\\results\\05_summary.json",
+    "bytes": 2535,
+    "modified": "2026-07-31 18:16:25"
+  },
+  {
+    "path": "artifacts\\results\\05_test_scorecard.csv",
+    "bytes": 3259,
+    "modified": "2026-07-31 18:16:25"
+  },
+  {
+    "path": "artifacts\\results\\05_walk_forward.csv",
+    "bytes": 4224,
+    "modified": "2026-07-25 23:24:30"
+  },
+  {
+    "path": "artifacts\\results\\manifest.json",
+    "bytes": 9723,
+    "modified": "2026-08-01 15:34:23"
+  }
+]
