@@ -62,6 +62,31 @@
     ],
     "steps": 60000
   },
+  "factorial": {
+    "seeds": [
+      0,
+      1,
+      2
+    ],
+    "budgets": [
+      60000,
+      120000
+    ],
+    "sharpe_basis": "excess (13-week T-bill), matching the scorecard",
+    "cell_means_test_sharpe": {
+      "default @ 60k": 0.1862000799560982,
+      "default @ 120k": 0.15960680134438565,
+      "tuned @ 60k": 0.2761363589295786,
+      "tuned @ 120k": 0.17323840573444704
+    },
+    "effects_test_sharpe": {
+      "tuning effect (tuned - default)": 0.051783941681770904,
+      "budget effect (120k - 60k)": -0.06474561590342205,
+      "interaction": -0.07630467458341902,
+      "seed spread (mean within-cell sd)": 0.1309018452612337
+    },
+    "val_test_correlation": -0.3646900409532625
+  },
   "sweeps": {
     "cost_seeds": [
       0,

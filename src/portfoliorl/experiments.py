@@ -283,6 +283,83 @@ def run_variant_seeds(
 
 
 # --------------------------------------------------------------------------- #
+# Named-configuration comparison
+# --------------------------------------------------------------------------- #
+def config_comparison(
+    dataset: Dataset,
+    *,
+    configs: Mapping[str, Mapping[str, Mapping[str, Any]]],
+    seeds: Sequence[int] = (0, 1, 2),
+    tag: str = "05_config_comparison",
+    force: bool = False,
+    progress: Callable[[str], None] | None = print,
+) -> ExperimentResults:
+    """Train several *named* whole configurations under matched seeds.
+
+    ``run_variant_seeds`` only varies the Double/Duelling flags, which is the
+    wrong tool for the question raised by the headline result: the tuned agent
+    scored far below the untuned ablation agents, but it differed from them in
+    *two* ways at once -- tuned hyperparameters and a doubled training budget.
+    Those effects are confounded and cannot be separated by re-reading the
+    existing tables.
+
+    Each entry maps a label to ``{"agent": {...}, "env": {...}}``, either of
+    which may be omitted.  Seeds are matched across configurations so the
+    comparison is paired, exactly as in the variant ablation.
+    """
+    from dataclasses import replace
+
+    if not force and ExperimentResults.exists(tag):
+        if progress:
+            progress(f"loading cached results from {tag}.csv")
+        return ExperimentResults.load(tag)
+
+    train_ds, valid_ds, test_ds = (dataset.split(s) for s in ("train", "valid", "test"))
+    rows, curves, already_done = _resume(tag, force, progress)
+    total = len(configs) * len(seeds)
+
+    for label, spec in configs.items():
+        agent_overrides = dict(spec.get("agent", {}))
+        env_overrides = dict(spec.get("env", {}))
+        env_cfg = replace(config.DEFAULT.env, **env_overrides) if env_overrides else None
+
+        for seed in seeds:
+            if (label, seed) in already_done:
+                continue
+            cfg_i = variant_config(
+                double=agent_overrides.pop("double", True),
+                dueling=agent_overrides.pop("dueling", True),
+                seed=seed,
+                **agent_overrides,
+            )
+            result = train.train_dqn(
+                train_ds, valid_ds, agent_cfg=cfg_i, env_cfg=env_cfg,
+                run_name=f"{tag}_{label.replace(' ', '_')}",
+                save_checkpoints=False, write_log=False, progress=None,
+            )
+            val_metrics, _ = _evaluate_split(result.agent, valid_ds, env_cfg, "val")
+            test_metrics, test_daily = _evaluate_split(result.agent, test_ds, env_cfg, "test")
+            row = {
+                "variant": label, "seed": seed,
+                "total_steps": cfg_i.total_steps,
+                "selected_step": result.best.get("step", 0),
+                "wall_time": round(result.wall_time, 1),
+                **val_metrics, **test_metrics,
+            }
+            rows.append(row)
+            curves[f"{label}|{seed}"] = test_daily
+            _record_progress(tag, row, test_daily)
+            if progress:
+                progress(f"  [{len(rows):>2}/{total}] {label:<28} seed {seed}  "
+                         f"val {row['val_sharpe']:+.2f}  test {row['test_sharpe']:+.2f}")
+
+    out = ExperimentResults(tag=tag, table=pd.DataFrame(rows), curves=curves)
+    out.save()
+    _clear_progress(tag)
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Transaction-cost sensitivity
 # --------------------------------------------------------------------------- #
 def cost_sweep(

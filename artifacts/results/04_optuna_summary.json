@@ -18,7 +18,7 @@
     "lambda_drawdown": 0.1787888520914185
   },
   "best_user_attrs": {
-    "seconds": 46.3,
+    "seconds": 67.9,
     "step": 8000,
     "val_action_entropy": 1.3739009462957992,
     "val_cagr": 0.18046199512929584,

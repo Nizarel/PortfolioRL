@@ -38,6 +38,60 @@ TWO_VARIANTS = {
 
 
 # --------------------------------------------------------------------------- #
+# Named-configuration comparison
+# --------------------------------------------------------------------------- #
+class TestConfigComparison:
+    """Separating "the tuned hyperparameters hurt" from "the longer budget hurt"
+    needs whole configurations varied under matched seeds, not just the
+    Double/Duelling flags."""
+
+    def test_each_config_and_seed_produces_one_row(self, dataset):
+        res = experiments.config_comparison(
+            dataset,
+            configs={
+                "short": {"agent": {"total_steps": 400, "eval_every": 200}},
+                "long": {"agent": {"total_steps": 600, "eval_every": 200}},
+            },
+            seeds=(0, 1), tag="unit_cfgcmp", progress=None,
+        )
+        assert len(res.table) == 4
+        assert set(res.table["variant"]) == {"short", "long"}
+        assert sorted(res.table["seed"].unique()) == [0, 1]
+
+    def test_the_budget_actually_differs_between_configs(self, dataset):
+        """Guards against overrides being silently dropped -- which would make
+        the whole comparison vacuous."""
+        res = experiments.config_comparison(
+            dataset,
+            configs={
+                "short": {"agent": {"total_steps": 400, "eval_every": 200}},
+                "long": {"agent": {"total_steps": 600, "eval_every": 200}},
+            },
+            seeds=(0,), tag="unit_cfgcmp_budget", progress=None,
+        )
+        by = res.table.set_index("variant")["total_steps"]
+        assert by["short"] == 400
+        assert by["long"] == 600
+
+    def test_env_overrides_are_applied(self, dataset):
+        """The tuned config changes lambda_drawdown, which lives on EnvConfig
+        rather than AgentConfig -- so env overrides must reach the environment."""
+        res = experiments.config_comparison(
+            dataset,
+            configs={
+                "free": {"agent": {"total_steps": 400, "eval_every": 200},
+                         "env": {"transaction_cost_bps": 0.0}},
+                "costly": {"agent": {"total_steps": 400, "eval_every": 200},
+                           "env": {"transaction_cost_bps": 200.0}},
+            },
+            seeds=(0,), tag="unit_cfgcmp_env", progress=None,
+        )
+        costs = res.table.set_index("variant")["test_total_cost"]
+        assert costs["free"] == pytest.approx(0.0, abs=1e-12)
+        assert costs["costly"] > costs["free"]
+
+
+# --------------------------------------------------------------------------- #
 # Variant / seed sweep
 # --------------------------------------------------------------------------- #
 def test_variant_sweep_produces_one_row_per_variant_and_seed(dataset):
