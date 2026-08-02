@@ -48,8 +48,8 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
-from . import config, train
-from .agent import VARIANTS, variant_config
+from . import config, metrics, train
+from .agent import VARIANTS, ensemble_q_values, hysteresis_policy, variant_config
 from .features import Dataset
 
 
@@ -184,9 +184,9 @@ class ExperimentResults:
 # Core runner
 # --------------------------------------------------------------------------- #
 def _evaluate_split(
-    agent, split_ds: Dataset, env_cfg, prefix: str
+    agent, split_ds: Dataset, env_cfg, prefix: str, policy=None
 ) -> tuple[dict[str, Any], pd.DataFrame]:
-    res = train.evaluate(agent, split_ds, env_cfg)
+    res = train.evaluate(agent, split_ds, env_cfg, policy=policy)
     perf = res["performance"]
     return {
         f"{prefix}_sharpe": perf["Sharpe"],
@@ -478,40 +478,69 @@ def walk_forward(
     tag: str = "05_walk_forward",
     total_steps: int = 60_000,
     eval_every: int = 5_000,
+    agent_overrides: Mapping[str, Any] | None = None,
     env_cfg: config.EnvConfig | None = None,
+    ensemble: bool = False,
+    hysteresis_margin: float = 0.0,
     force: bool = False,
     progress: Callable[[str], None] | None = print,
     **fold_kwargs,
 ) -> ExperimentResults:
-    """Retrain once per fold and evaluate on the following year only."""
+    """Retrain once per fold and evaluate on the following year only.
+
+    ``ensemble`` adds one extra row per fold, with ``seed = -1``, holding the
+    policy that acts on the *mean* Q-values of every seed trained for that fold.
+    Seed dispersion is the largest effect in this project, so the ensemble is
+    reported as its own strategy rather than as a summary statistic of the
+    individual seeds.
+    """
     if not force and ExperimentResults.exists(tag):
         if progress:
             progress(f"loading cached results from {tag}.csv")
         return ExperimentResults.load(tag)
 
     env_cfg = env_cfg or config.DEFAULT.env
+    overrides = dict(agent_overrides or {})
     rows, curves, already_done = _resume(tag, force, progress)
+
+    def _policy_for(agents):
+        qfn = ensemble_q_values(agents)
+        if hysteresis_margin > 0.0:
+            return hysteresis_policy(
+                qfn, margin=hysteresis_margin, initial_action=env_cfg.initial_action
+            )
+        return lambda obs: int(np.argmax(qfn(obs)))
 
     for fold in walk_forward_folds(dataset, **fold_kwargs):
         label = str(fold["fold"])
-        if all((label, seed) in already_done for seed in seeds):
+        wanted = list(seeds) + ([-1] if ensemble else [])
+        if all((label, seed) in already_done for seed in wanted):
             continue
 
         tr = _slice(dataset, None, fold["train_end"])
         va = _slice(dataset, fold["valid_start"], fold["valid_end"])
         te = _slice(dataset, fold["test_start"], fold["test_end"])
+        fold_agents = []
 
         for seed in seeds:
-            if (label, seed) in already_done:
+            done = (label, seed) in already_done
+            # An ensemble needs every seed's weights in memory, so a resumed run
+            # must retrain even the folds it has already scored individually.
+            if done and not ensemble:
                 continue
             cfg_i = variant_config(double=True, dueling=True, total_steps=total_steps,
-                                   eval_every=eval_every, seed=seed)
+                                   eval_every=eval_every, seed=seed, **overrides)
             result = train.train_dqn(
                 tr, va, agent_cfg=cfg_i, env_cfg=env_cfg,
                 run_name=f"{tag}_{fold['fold']}",
                 save_checkpoints=False, write_log=False, progress=None,
             )
-            test_metrics, test_daily = _evaluate_split(result.agent, te, env_cfg, "test")
+            fold_agents.append(result.agent)
+            if done:
+                continue
+            test_metrics, test_daily = _evaluate_split(
+                result.agent, te, env_cfg, "test", policy=_policy_for([result.agent])
+            )
             row = {
                 "variant": label, "seed": seed,
                 "train_days": len(tr.dates), "test_days": len(te.dates),
@@ -526,10 +555,88 @@ def walk_forward(
                          f"train to {fold['train_end']}  "
                          f"test Sharpe {test_metrics['test_sharpe']:+.2f}")
 
+        if ensemble and (label, -1) not in already_done:
+            test_metrics, test_daily = _evaluate_split(
+                fold_agents[0], te, env_cfg, "test", policy=_policy_for(fold_agents)
+            )
+            row = {
+                "variant": label, "seed": -1,
+                "train_days": len(tr.dates), "test_days": len(te.dates),
+                **{k: v for k, v in fold.items() if k != "fold"},
+                **test_metrics,
+            }
+            rows.append(row)
+            curves[f"{label}|{-1}"] = test_daily
+            _record_progress(tag, row, test_daily)
+            if progress:
+                progress(f"  fold {label}  ensemble  "
+                         f"test Sharpe {test_metrics['test_sharpe']:+.2f}")
+
     out = ExperimentResults(tag=tag, table=pd.DataFrame(rows), curves=curves)
     out.save()
     _clear_progress(tag)
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Walk-forward concatenation
+#
+# A mean of per-year Sharpes is not the Sharpe an investor would have realised:
+# it weights a calm year and a crisis year equally and hides the compounding
+# between them. Chaining the fold curves into one continuous out-of-sample
+# series is the only figure that answers "what would holding this strategy from
+# 2021 to 2025 actually have done", and it is the number the benchmarks are
+# quoted on.
+# --------------------------------------------------------------------------- #
+DECISION_SPAN = config.DEFAULT.env.steps_per_decision
+
+
+def concat_walk_forward_curve(
+    results: ExperimentResults, seed: int, initial_value: float | None = None
+) -> pd.DataFrame:
+    """Chain one seed's per-fold test years into a single continuous curve."""
+    initial_value = (
+        config.DEFAULT.env.initial_value if initial_value is None else initial_value
+    )
+    sub = results.table[results.table["seed"] == seed]
+    if sub.empty:
+        raise KeyError(f"no walk-forward rows for seed {seed}")
+
+    folds = sorted(str(v) for v in sub["variant"].unique())
+    pieces = [results.curve(fold, seed) for fold in folds]
+    joined = pd.concat(pieces).sort_index()
+
+    # Wealth is rebuilt by compounding, because each fold's own curve restarts
+    # at the initial value.
+    wealth = initial_value * (1.0 + joined["return"]).cumprod()
+    out = joined.copy()
+    out["wealth"] = wealth
+    out["drawdown"] = 1.0 - wealth / wealth.cummax()
+    return out
+
+
+def concat_walk_forward(
+    results: ExperimentResults,
+    *,
+    risk_free: pd.Series | float = 0.0,
+    seeds: Sequence[int] | None = None,
+) -> pd.DataFrame:
+    """Score every seed's chained out-of-sample curve; one row per seed."""
+    seeds = seeds if seeds is not None else sorted(results.table["seed"].unique())
+    rows = []
+    for seed in seeds:
+        seed = int(seed)
+        curve = concat_walk_forward_curve(results, seed)
+        row = metrics.performance_summary(
+            curve, risk_free=risk_free, name=f"seed {seed}"
+        )
+        sub = results.table[results.table["seed"] == seed]
+        n_years = max(len(curve) / metrics.ANNUAL, 1e-9)
+        decisions = (sub["test_days"] // DECISION_SPAN) if "test_days" in sub else 0
+        row["Ann. turnover"] = float((sub["test_mean_turnover"] * decisions).sum()) / n_years
+        row["Total cost"] = float(sub["test_total_cost"].sum())
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 # --------------------------------------------------------------------------- #

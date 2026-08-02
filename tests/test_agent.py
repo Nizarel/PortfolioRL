@@ -359,7 +359,7 @@ def test_evaluate_is_deterministic_and_pays_transaction_costs(dataset):
     second = train_mod.evaluate(ag, valid)
     assert first["final_wealth"] == pytest.approx(second["final_wealth"], rel=1e-15)
     assert first["summary"]["total_cost_fraction"] > 0
-    assert 0.0 <= first["action_entropy"] <= np.log(6) + 1e-9
+    assert 0.0 <= first["action_entropy"] <= np.log(len(config.ACTION_ALLOCATIONS)) + 1e-9
     assert len(first["action_share"]) == len(config.ACTION_ALLOCATIONS)
     assert sum(first["action_share"]) == pytest.approx(1.0)
 
@@ -373,3 +373,101 @@ def test_agent_policy_plugs_into_run_policy(dataset):
     assert len(daily) > 0
     assert summary["n_decisions"] > 0
     assert np.isfinite(summary["final_wealth"])
+
+
+# --------------------------------------------------------------------------- #
+# Evaluation-time policy wrappers
+# --------------------------------------------------------------------------- #
+def test_ensemble_of_one_agent_is_the_agent(dataset):
+    ag = agent_mod.DQNAgent(obs_dim=31, n_actions=6, cfg=_tiny_cfg())
+    policy = agent_mod.ensemble_policy([ag])
+    rng = np.random.default_rng(0)
+    for _ in range(20):
+        obs = rng.normal(size=31).astype(np.float32)
+        assert policy(obs) == ag.greedy_action(obs)
+
+
+def test_ensemble_averages_q_values_across_agents():
+    agents = [
+        agent_mod.DQNAgent(obs_dim=8, n_actions=6, cfg=_tiny_cfg(seed=s)) for s in (0, 1, 2)
+    ]
+    qfn = agent_mod.ensemble_q_values(agents)
+    obs = np.ones(8, dtype=np.float32)
+    expected = np.mean([a.q_values(obs) for a in agents], axis=0)
+    np.testing.assert_allclose(qfn(obs), expected, rtol=1e-6)
+
+
+def test_ensemble_rejects_mismatched_action_counts():
+    a = agent_mod.DQNAgent(obs_dim=8, n_actions=6, cfg=_tiny_cfg())
+    b = agent_mod.DQNAgent(obs_dim=8, n_actions=7, cfg=_tiny_cfg())
+    with pytest.raises(ValueError, match="action count"):
+        agent_mod.ensemble_q_values([a, b])
+    with pytest.raises(ValueError):
+        agent_mod.ensemble_q_values([])
+
+
+def test_hysteresis_with_zero_margin_is_plain_greedy(dataset):
+    ag = agent_mod.DQNAgent(obs_dim=31, n_actions=6, cfg=_tiny_cfg())
+    valid = dataset.split("valid")
+    greedy, _ = env_mod.run_policy(valid, ag.policy(), seed=0)
+    held, _ = env_mod.run_policy(
+        valid,
+        agent_mod.hysteresis_policy(agent_mod.ensemble_q_values([ag]), margin=0.0),
+        seed=0,
+    )
+    np.testing.assert_array_equal(greedy["action"].to_numpy(), held["action"].to_numpy())
+
+
+def test_hysteresis_holds_until_the_margin_is_cleared():
+    """A hand-built Q function makes the switching rule checkable by hand."""
+    q = np.array([0.0, 0.0, 0.0])
+    policy = agent_mod.hysteresis_policy(lambda _obs: q, margin=0.5, initial_action=0)
+    obs = np.zeros(3)
+
+    q[:] = [0.0, 0.3, 0.0]  # better, but only by 0.3 < 0.5
+    assert policy(obs) == 0
+    q[:] = [0.0, 0.6, 0.0]  # now clears the margin
+    assert policy(obs) == 1
+    q[:] = [0.4, 0.6, 0.0]  # action 1 still leads, so no reason to move
+    assert policy(obs) == 1
+    q[:] = [1.2, 0.6, 0.0]  # 1.2 - 0.6 = 0.6 > 0.5, switch back
+    assert policy(obs) == 0
+
+
+def test_hysteresis_rejects_negative_margin():
+    with pytest.raises(ValueError):
+        agent_mod.hysteresis_policy(lambda _obs: np.zeros(3), margin=-0.1)
+
+
+# --------------------------------------------------------------------------- #
+# Checkpoint selection
+# --------------------------------------------------------------------------- #
+def test_smoothed_selection_prefers_a_sustained_run_over_a_lucky_spike(dataset):
+    """Validation Sharpe is noisy enough that the single best evaluation is
+    largely the luckiest one; the smoothed rule must ignore an isolated peak."""
+    sharpes = [0.1, 0.9, 0.1, 0.5, 0.6, 0.55]
+
+    window = 3
+    smoothed = [
+        np.mean(sharpes[i - window + 1 : i + 1]) if i >= window - 1 else -np.inf
+        for i in range(len(sharpes))
+    ]
+    assert int(np.argmax(sharpes)) == 1, "the spike wins under plain argmax"
+    assert int(np.argmax(smoothed)) == 5, "the sustained stretch wins when smoothed"
+
+
+def test_smoothed_selection_falls_back_when_the_window_cannot_fill(dataset):
+    """A run with fewer evaluations than the window must still pick a
+    checkpoint rather than silently returning the final weights."""
+    cfg = _tiny_cfg(selection="smoothed", select_window=99)
+    result = train_mod.train_dqn(
+        dataset.split("train"),
+        dataset.split("valid"),
+        agent_cfg=cfg,
+        run_name="test_short_smoothed",
+        write_log=False,
+        save_checkpoints=False,
+        progress=lambda *_a, **_k: None,
+    )
+    assert np.isfinite(result.best_val_sharpe)
+    assert result.best["step"] > 0

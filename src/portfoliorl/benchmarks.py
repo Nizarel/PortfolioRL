@@ -255,14 +255,19 @@ def build_policies(
     dataset: features.Dataset,
     seed: int = 0,
     cfg: config.DataConfig | None = None,
+    n_actions: int | None = None,
 ) -> dict[str, Policy]:
-    """All environment-executed benchmark policies, in report order."""
+    """All environment-executed benchmark policies, in report order.
+
+    ``n_actions`` must match the menu the agent is using: the random floor is
+    only a fair comparator if it draws from the same set of allocations.
+    """
     policies: dict[str, Policy] = {
         name: constant_action(action) for name, action in STATIC_BENCHMARKS.items()
     }
     policies["Volatility target"] = volatility_target_policy(dataset, cfg=cfg)
     policies["Trend following"] = trend_following_policy(dataset)
-    policies["Random"] = random_policy(seed)
+    policies["Random"] = random_policy(seed, n_actions=n_actions)
     return policies
 
 
@@ -275,8 +280,9 @@ def run_benchmarks(
 ) -> dict[str, tuple[pd.DataFrame, dict]]:
     """Evaluate every benchmark on one split and return ``name -> (daily, summary)``."""
     results: dict[str, tuple[pd.DataFrame, dict]] = {}
+    menu = (env_cfg or config.DEFAULT.env).n_actions
 
-    for name, policy in build_policies(dataset, seed=seed, cfg=cfg).items():
+    for name, policy in build_policies(dataset, seed=seed, cfg=cfg, n_actions=menu).items():
         results[name] = env.run_policy(dataset, policy, env_cfg=env_cfg, seed=seed)
 
     if include_hold:

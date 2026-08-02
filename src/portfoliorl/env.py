@@ -116,6 +116,13 @@ class PortfolioEnv(gym.Env):
         self._asset_names = list(dataset.prices.columns)
 
         self._allocations = np.asarray(config.ACTION_ALLOCATIONS, dtype=np.float64)
+        if self.cfg.n_actions is not None:
+            if not 1 <= self.cfg.n_actions <= len(self._allocations):
+                raise ValueError(
+                    f"n_actions must be between 1 and {len(self._allocations)}, "
+                    f"got {self.cfg.n_actions}"
+                )
+            self._allocations = self._allocations[: self.cfg.n_actions]
         if self._allocations.shape[1] != self._n_assets:
             raise ValueError(
                 f"ACTION_ALLOCATIONS has {self._allocations.shape[1]} columns but the "
@@ -125,7 +132,7 @@ class PortfolioEnv(gym.Env):
             raise ValueError("Every row of ACTION_ALLOCATIONS must sum to 1")
 
         self.action_space = spaces.Discrete(len(self._allocations))
-        obs_dim = self._features.shape[1] + N_PORTFOLIO_FEATURES
+        obs_dim = self._features.shape[1] + N_PORTFOLIO_FEATURES + int(self.cfg.include_prev_action)
         # Finite bounds rather than +/-inf: market features are clipped by the
         # FeatureScaler and every portfolio-state component is bounded by
         # construction (weights in [0, 1], drawdown in [0, 1], duration capped
@@ -153,7 +160,42 @@ class PortfolioEnv(gym.Env):
         self._daily_returns: list[float] = []
         self._dd_days = 0
         self._prev_dd = 0.0
+        self._prev_action = int(self.cfg.initial_action)
         self.history: list[dict[str, Any]] = []
+
+        # Training-time episode curriculum; never consulted in eval mode.
+        self._stress_starts = (
+            self._compute_stress_starts()
+            if (self.mode == "train" and self.cfg.stress_sampling_fraction > 0.0)
+            else np.empty(0, dtype=np.int64)
+        )
+
+    def _compute_stress_starts(self, mom_window: int = 63, corr_window: int = 60) -> np.ndarray:
+        """Day indices that begin a *stress* regime.
+
+        Defined from raw asset returns rather than the scaled feature matrix, so
+        the threshold means what it says instead of "above the training mean".
+        Stress here is the 2022 configuration: equities falling while bonds have
+        stopped hedging them. Over 2004-2017 the 60-day SPY/TLT correlation is
+        negative on 92% of days, so the agent reaches the test period having
+        barely trained on the one regime that decides the result.
+
+        The correlation threshold is a *quantile* of the split's own
+        distribution rather than a fixed zero: an absolute cut selects 28 days
+        out of 2902, too few and too clustered to train on.
+
+        This only biases *where training episodes start*. No trading decision
+        sees it, and it draws exclusively on in-split data.
+        """
+        spy = pd.Series(self._returns[:, 0])
+        tlt = pd.Series(self._returns[:, 1])
+
+        momentum = (1.0 + spy).rolling(mom_window).apply(np.prod, raw=True) - 1.0
+        corr = spy.rolling(corr_window).corr(tlt)
+        threshold = corr.quantile(self.cfg.stress_corr_quantile)
+
+        mask = (momentum < 0.0) & (corr > threshold)
+        return np.flatnonzero(mask.fillna(False).to_numpy())
 
     # ------------------------------------------------------------------ #
     # Gymnasium API
@@ -173,6 +215,15 @@ class PortfolioEnv(gym.Env):
             # Sample the *day* rather than the decision index so episodes are not
             # all phase-aligned to the same weekday.
             self._start_idx = int(self.np_random.integers(0, max(last_start, 1)))
+            if (
+                len(self._stress_starts)
+                and self.np_random.random() < self.cfg.stress_sampling_fraction
+            ):
+                eligible = self._stress_starts[self._stress_starts < max(last_start, 1)]
+                if len(eligible):
+                    self._start_idx = int(
+                        eligible[self.np_random.integers(0, len(eligible))]
+                    )
         else:
             self._n_decisions = self._max_decisions
             self._start_idx = 0
@@ -185,6 +236,7 @@ class PortfolioEnv(gym.Env):
         self._daily_returns = []
         self._dd_days = 0
         self._prev_dd = 0.0
+        self._prev_action = int(self.cfg.initial_action)
         self.history = []
 
         return self._observation(), {"start_date": self._dates[self._start_idx]}
@@ -250,15 +302,18 @@ class PortfolioEnv(gym.Env):
         )
         vol_term = self._portfolio_vol()
         dd_increment = max(0.0, current_dd - dd_before)
+        switched = float(action != self._prev_action)
 
         reward = self.cfg.reward_scale * (
             return_term
             - self.cfg.lambda_turnover * turnover
             - self.cfg.lambda_volatility * vol_term
             - self.cfg.lambda_drawdown * dd_increment
+            - self.cfg.lambda_switch * switched
         )
 
         self._prev_dd = current_dd
+        self._prev_action = action
         self._decision += 1
 
         # Both endings are *time limits* imposed by the finite data sample, not
@@ -286,6 +341,8 @@ class PortfolioEnv(gym.Env):
             * turnover,
             "reward_vol_penalty": -self.cfg.reward_scale * self.cfg.lambda_volatility * vol_term,
             "reward_dd_penalty": -self.cfg.reward_scale * self.cfg.lambda_drawdown * dd_increment,
+            "reward_switch_penalty": -self.cfg.reward_scale * self.cfg.lambda_switch * switched,
+            "switched": switched,
             "weights": self._weights.copy(),
         }
 
@@ -332,16 +389,17 @@ class PortfolioEnv(gym.Env):
         market = self._features[self._idx]
 
         drawdown = 1.0 - self._wealth / self._peak
-        portfolio = np.array(
-            [
-                *self._weights,
-                self._portfolio_vol() * 100.0,
-                drawdown,
-                min(self._dd_days / config.TRADING_DAYS_PER_YEAR, 3.0),
-                self._decision / max(self._n_decisions, 1),
-            ],
-            dtype=np.float64,
-        )
+        components = [
+            *self._weights,
+            self._portfolio_vol() * 100.0,
+            drawdown,
+            min(self._dd_days / config.TRADING_DAYS_PER_YEAR, 3.0),
+            self._decision / max(self._n_decisions, 1),
+        ]
+        if self.cfg.include_prev_action:
+            # Scaled to [0, 1] to match the magnitude of the other components.
+            components.append(self._prev_action / max(len(self._allocations) - 1, 1))
+        portfolio = np.array(components, dtype=np.float64)
         obs = np.concatenate([market, portfolio])
         # Guard the declared observation-space bounds.  Only a pathological
         # volatility spike could reach the limit, but an out-of-bounds

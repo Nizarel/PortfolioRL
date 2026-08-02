@@ -14,12 +14,11 @@
 
 ### What the project asks
 
-A long-term investor holding several asset classes must periodically decide how much of each
-to hold. The standard answers are static rules — hold 60% equities and 40% bonds, rebalance
-quarterly — which ignore the state of the market entirely. **PortfolioRL asks whether a
-reinforcement learning agent, allowed to observe market conditions and shift its allocation
-in response, can do better than those static rules once realistic transaction costs are
-charged.**
+A long-term investor holding several asset classes must periodically determine the portfolio
+weights to hold. Conventional benchmark policies, such as a fixed 60/40 equity-bond mix,
+apply the same allocation rule regardless of prevailing market conditions. **PortfolioRL
+examines whether a reinforcement learning agent that observes market conditions and adjusts
+its allocation can improve on these benchmark policies after transaction costs are charged.**
 
 The problem is posed as a Markov Decision Process and solved with a Deep Q-Network:
 
@@ -53,40 +52,38 @@ of the pipeline to the artefact that proves it executed.
 
 ### The headline finding
 
-**The most useful result is a positive one: the agent performs well when it is allowed to
-keep learning.** Retrained annually in a walk-forward protocol it averages a raw Sharpe near
-**1.00** — roughly two and a half times the 0.387 earned by a single policy fitted once — and
-**beats 60/40 in four of five folds**, including the 2022 rate shock, where it lost 17.1%
-against 60/40's 23.4%. The evidence therefore points to non-stationarity rather than to a
-defect in the formulation: a policy fitted on 2004–2017 does not transfer intact to
-2021–2025, but a periodically refitted one largely does. That is an actionable finding, and
-it is the version of the strategy a practitioner would actually deploy.
+The principal positive result comes from the walk-forward analysis. When the agent is
+retrained annually, it attains a mean raw Sharpe ratio of approximately **1.00**, compared
+with 0.387 for the train-once policy, and exceeds weekly rebalanced 60/40 in four of five
+annual folds. This includes 2022, when the agent returned -17.1% versus -23.4% for 60/40.
+Because this analysis was conducted after the held-out test period was examined, it is
+exploratory; nevertheless, it motivates periodic refitting as the primary next experiment.
 
-Fitted once and then frozen — the configuration the assignment specifies — the agent does not
-beat the static benchmarks, earning an excess Sharpe of 0.141 against 0.380 for 60/40 and
-0.700 for SPY. **The contribution here is that the study is instrumented well enough to
-establish this, and to decline a win it cannot support.** No pairwise difference survives
-Holm correction, and the Deflated Sharpe Ratio of **0.238** shows the tuned result is
-consistent with the best of 72 configurations searched over a noisy objective. A less careful
-evaluation would have reported the validation Sharpe of 1.987 from Section 5 as a success;
-this one shows why that number was an artefact of the search.
+Under the primary train-once evaluation protocol, the agent does not outperform the static
+benchmarks: its excess Sharpe ratio is 0.141, compared with 0.380 for 60/40 buy-and-hold and
+0.700 for SPY. No pairwise comparison remains significant after Holm correction. In addition,
+the Deflated Sharpe Ratio is **0.238**, indicating that the selected configuration does not
+provide sufficient evidence of skill after accounting for the 72 configurations considered
+during development. The validation Sharpe of 1.987 reported in Section 5 therefore did not
+generalise to the held-out test period.
 
-Three diagnostics make the frozen-policy result informative rather than merely disappointing,
-and each generalises beyond this project:
+Three diagnostics clarify the limits of the primary evaluation:
 
-1. **Seed variance dominates every effect the study set out to measure.** Within-cell seed
-   standard deviation is 0.131 Sharpe, larger than the tuning effect (+0.052) and the
-   training-budget effect (−0.065) combined — so single-seed comparisons in this domain are
-   uninformative by construction.
+1. **Seed variance dominates the estimated effects.** The within-cell seed standard deviation
+   is 0.131 Sharpe, larger than the tuning effect (+0.052) and the training-budget effect
+   (−0.065) combined. Single-seed comparisons are therefore insufficient for estimating
+   these effects reliably.
 2. **Validation performance does not predict test performance.** The correlation is
-   **−0.365**, meaning model selection was pointing the wrong way and a standard tuning
-   pipeline would have made matters worse, not better.
-3. **A single 1,254-day test split cannot carry the claim.** Certifying this Sharpe at 95%
-   confidence needs a track record of ~4,500 days, so the evaluation is 3.6× short — a limit
-   on the experiment, not on the agent.
+   **−0.365** in this experiment, indicating that the observed validation ranking did not
+   provide a reliable basis for selecting a final configuration.
+3. **The test sample is short relative to the estimated track-record requirement.**
+   Establishing this Sharpe ratio at 95% confidence requires approximately 4,500 days,
+   whereas the test split contains 1,254 days.
 
-Taken together they identify the experimental design, rather than the algorithm, as the
-binding constraint, and each has a concrete remedy set out in Section 8.
+ Taken together, these findings indicate that regime change, seed sensitivity, and model
+ selection are important limitations of the current evaluation. Section 8 maps each limitation
+ to a concrete follow-up experiment, with the objective of improving performance against the
+ diversified static benchmarks.
 
 Sections 3–7 present the evidence for each of these claims; Section 8 sets out what remains
 before the final submission.
@@ -107,7 +104,8 @@ What remains is writing and presentation, not computation.
 | **`tests/`** | 8 modules, **135 passing tests**, including golden tests that lock the environment's accounting invariants |
 | **`tools/`** | `package_submission.py` — allow-list archive builder |
 
-All algorithm code lives in `src/`; notebooks import and narrate. No logic in a cell.
+All algorithmic logic resides in `src/portfoliorl/`; the notebooks execute, document, and
+visualise the package-level implementation.
 
 ### Dataset
 
@@ -157,16 +155,18 @@ Also recorded: hit rate 52.5%, Sortino 0.558, Calmar 0.162, daily 95% CVaR 1.94%
 drawdown 885 days, action entropy 1.465 nats of a possible 1.792 — so the policy uses its
 action set rather than collapsing onto one allocation.
 
-**The result is negative.** The agent beats only the random floor and cash, and carries
-almost exactly the risk of a 60/40 portfolio for less than half the return. Two diagnoses:
+The train-once agent exceeds the random policy and cash on the excess-Sharpe basis, but trails
+the remaining static strategies. It assumes volatility similar to 60/40 buy-and-hold while
+delivering a lower return. Two observations help explain this result:
 
 1. **Cost drag is real but secondary.** 9.43× annual turnover consumed 4.69% of terminal
    wealth (≈ 0.94%/yr), roughly 45% of the 2.06-point CAGR gap to equal weight. Adding it
-   all back still leaves the agent below every static allocation — the dominant defect is
-   *which* allocations it chose, not what it paid to reach them.
-2. **It did not step aside.** Maximum drawdown 26.45%, within a point of 60/40 buy-and-hold,
-   and the allocation trace (`05_04_allocation_over_time.png`) shows roughly 80% equity held
-   straight through the 2022 drawdown.
+   wealth (approximately 0.94% per year), roughly 45% of the 2.06-point CAGR gap to equal
+   weight. Even without this cost, the agent remains below every static allocation. Allocation
+   selection is therefore the primary observed limitation, rather than transaction cost alone.
+2. **Limited defensive reallocation.** Maximum drawdown was 26.45%, within one percentage
+   point of 60/40 buy-and-hold. The allocation trace (`05_04_allocation_over_time.png`) also
+   shows an equity allocation near 80% through the 2022 drawdown.
 
 ---
 
@@ -178,8 +178,10 @@ almost exactly the risk of a 60/40 portfolio for less than half the return. Two 
 block 10 days, paired via a shared index draw. Every interval straddles zero; nothing is
 significant after Holm–Bonferroni.* (`05_10_bootstrap_significance.png`)
 
-The closest comparison is 100% SPY (Δ = −0.501, *p* = 0.053 unadjusted, 0.473 after Holm) —
-and it is a comparison the agent **loses**. Source: `artifacts/results/05_significance.csv`.
+The smallest unadjusted *p*-value is for the comparison with 100% SPY (Δ = −0.501,
+*p* = 0.053 unadjusted; 0.473 after Holm adjustment). Its negative point estimate favours
+SPY, but it is not statistically significant at the specified family-wise error rate. Source:
+`artifacts/results/05_significance.csv`.
 
 > **Reading note.** `significance.csv` is on the *raw* basis, so its all-cash row shows the
 > agent losing to cash (raw cash Sharpe +0.836, because the raw ratio does not subtract the
@@ -189,28 +191,22 @@ and it is a comparison the agent **loses**. Source: `artifacts/results/05_signif
 
 | Diagnostic | Value | Reading |
 |---|---|---|
-| Test Sharpe — excess / raw | 0.141 / 0.387 | The observed number. `05_summary.json` stores the **excess** value, but every statistic below is computed from raw returns — see the defect note. |
-| Lo (2002) analytic SE (raw) | 0.448 | Larger than the estimate itself — even the optimistic analytic bound fails to exclude zero |
-| Probabilistic Sharpe vs 0 (raw) | 0.807 | *Before* deflation: 81% confident the Sharpe exceeds zero |
+| Test Sharpe — excess / raw | 0.141 / 0.387 | The excess basis is used for the Section 3 scorecard; inference statistics use raw total returns. |
+| Lo (2002) analytic SE (raw) | 0.448 | The estimate is smaller than its serial-correlation-adjusted standard error. |
+| Probabilistic Sharpe vs 0 (raw) | 0.807 | Before correcting for the search process, there is 80.7% probability that the raw Sharpe exceeds zero. |
 | Configurations evaluated | 72 | 18 grid + 30 Optuna + 24 ablation |
-| **Expected max Sharpe from noise** | **0.705** | Searching 72 configurations of *pure noise* would surface this |
-| **Deflated Sharpe Ratio** | **0.238** | Deflation collapses the 0.807 above: the observed 0.387 sits *below* the 0.705 noise expectation |
+| **Expected max Sharpe from noise** | **0.705** | The expected maximum under the multiple-testing adjustment. |
+| **Deflated Sharpe Ratio** | **0.238** | After accounting for search intensity, the observed raw Sharpe is below the adjusted benchmark. |
 | Minimum track record | 4,500 days | Needed to establish the effect at 95% |
 | Test split length | 1,254 days | **3.6× short** |
 
 Source: `artifacts/results/05_summary.json` → `inference`.
 
-> **Defect found while writing this report.** In `_build_nb05.py` the `inference` block mixes
-> Sharpe bases: `Test Sharpe` and the `Probabilistic Sharpe (vs 60/40)` benchmark are taken
-> from the **excess** scorecard, while `rl_returns` — the series fed to the Lo standard error,
-> both PSR calls, the DSR and the track-record length — is a **raw** total-return series. The
-> consequence is not neutral: `Probabilistic Sharpe (vs 60/40)` = 0.638 compares the agent's
-> *raw* Sharpe (0.387) against 60/40's *excess* Sharpe (0.230), which **flatters the agent**.
-> That figure is therefore withdrawn from the table above and is not relied on anywhere in
-> this report. The DSR, PSR-vs-0, Lo SE and track-record numbers are internally consistent on
-> the raw basis and stand. Correcting the two mixed keys requires re-running notebook 05
-> (~3 hours) and is scheduled before the final submission — it does not change any conclusion,
-> because the corrected comparison is *less* favourable to the agent, not more.
+> **Metric-basis reconciliation.** The scorecard reports excess Sharpe ratios, whereas the
+> serial-correlation and multiple-testing diagnostics are computed from raw total returns.
+> The report therefore labels the basis for every Sharpe ratio and does not use the previously
+> reported PSR comparison with 60/40, which mixed the two bases. The final notebook run will
+> persist consistently labelled raw and excess values for both the agent and each benchmark.
 
 ---
 
@@ -229,11 +225,11 @@ within-variant spread swamps every between-variant gap.* (`05_06_seed_dispersion
 | Double + Duelling | 0.554 ± 0.133 | — | — |
 | Vanilla DQN | 0.519 ± 0.256 | +0.10 | 0.821 |
 
-Sources: `05_ablation.csv`, `05_ablation_paired_tests.csv`. Nothing is significant, every
-|*d*| < 0.3, and the ordering is the *opposite* of what the literature predicts. **At this
-problem size the four variants are indistinguishable** — with ~620 training decisions per
-pass and six actions, the overestimation bias that Double Q-learning corrects is not the
-binding constraint. That is itself a defensible finding.
+Sources: `05_ablation.csv`, `05_ablation_paired_tests.csv`. No pairwise contrast is
+statistically significant and every |*d*| is below 0.3. Within this sample, the four variants
+are not distinguishable. With approximately 620 training decisions per pass and six actions,
+the experiment provides no evidence that overestimation-bias correction is the limiting
+factor.
 
 ![Tuning versus budget](../artifacts/figures/05_08_tuning_vs_budget.png)
 
@@ -242,9 +238,9 @@ matched seeds per cell. Right: validation Sharpe against test Sharpe for all twe
 (`05_08_tuning_vs_budget.png`)
 
 The two-stage search (18-point grid, then 30 Optuna TPE trials with median pruning — 19
-pruned, 11 completed) worked *on validation*: refitting at full budget lifted validation
-Sharpe from 0.992 to **1.677** and cut validation drawdown from 19.5% to 11.7%. It did not
-transfer.
+pruned, 11 completed) improved validation performance: refitting at full budget increased
+validation Sharpe from 0.992 to **1.677** and reduced validation drawdown from 19.5% to
+11.7%. These gains did not transfer to the test period.
 
 | Effect (excess Sharpe) | Magnitude |
 |---|---|
@@ -254,10 +250,11 @@ transfer.
 | **Mean within-cell seed sd** | **0.131** |
 | **Validation/test Sharpe correlation** | **−0.365** |
 
-Every main effect is smaller than the seed noise; training longer made things *worse*; and
-the validation signal is **negatively** correlated with the test outcome. Selecting on
-validation actively hurt — which is a large part of why the headline seed (raw 0.387) landed
-below the pooled ablation mean of 0.52–0.63.
+Each estimated main effect is smaller than the within-cell seed standard deviation. The
+120,000-step condition has a lower mean than the 60,000-step condition in this experiment,
+and validation and test Sharpe ratios are negatively correlated. These results suggest that
+the selected headline seed (raw Sharpe 0.387) is not representative of the pooled ablation
+means (0.52-0.63).
 
 ---
 
@@ -278,24 +275,24 @@ weekly-rebalanced 60/40 over the same fold.* (`05_12_walk_forward.png`)
 | 2025 | 1.505 ± 0.383 | 16.76% | 9.14% |
 | **Mean** | **≈ 1.00** | ≈ 8.98% | 11.07% |
 
-**This is the most interesting result in the study.** Retrained annually, the agent averages
-a raw Sharpe near 1.00 against 0.387 for the train-once headline model, and beats
-weekly-rebalanced 60/40 in four of five folds — including 2022, where it lost 17.1% against
-60/40's 23.4%. The natural conclusion is that the frozen 2017 training cut-off, not the
-algorithm, is the binding constraint: a policy fitted through 2017 is being asked to trade a
-market eight years of regime drift away.
+The walk-forward analysis is the most decision-relevant robustness result. With annual
+retraining, the agent averages a raw Sharpe near 1.00 versus 0.387 for the train-once model,
+and exceeds weekly rebalanced 60/40 in four of five folds. In 2022, it returned -17.1%
+compared with -23.4% for 60/40. These results are consistent with the hypothesis that a
+frozen 2017 training cut-off is vulnerable to subsequent regime change; they do not establish
+causality or a deployable performance claim.
 
-Two cautions. 2022 is still an absolute loss of 17% in exactly the regime the business case
-says adaptive allocation should protect against, and the agent *reduced* turnover that year
-(0.155, the lowest of the five) — it held its losing allocation rather than rotating out of
-it. And this result was produced **after** the test split was opened, so it is exploratory,
-not confirmatory, and must not be promoted to the headline.
+Two limitations remain. The 2022 result is still an absolute loss of 17%, and turnover was
+lowest in that year (0.155), indicating limited defensive reallocation. In addition, this
+analysis was performed after the original test split was opened. It is therefore exploratory
+and requires confirmation on an unseen holdout period.
 
 **Cost sweep** (retrained, not re-scored, at 0/5/10/20 bps, three seeds each;
 `05_cost_sweep.csv`): turnover falls monotonically from 0.284 to 0.184 per decision as costs
-rise, so the agent does read the cost signal. Sharpe moves non-monotonically (0.520 → 0.739
-→ 0.627 → 0.537 raw), which has no economic interpretation and sits inside three-seed noise.
-The approach does not collapse at 20 bps; the sweep cannot support a stronger claim.
+rise, indicating that the policy responds to the transaction-cost signal. Sharpe is
+non-monotonic (0.520 → 0.739 → 0.627 → 0.537 raw), and the three-seed design does not support
+a precise conclusion about the performance-cost relationship. The policy remains operational
+at 20 bps, but the sweep supports no stronger robustness claim.
 
 ---
 
@@ -312,17 +309,24 @@ The approach does not collapse at 20 bps; the sweep cannot support a stronger cl
 | The agent responds economically to transaction costs | **Yes.** Turnover 0.284 → 0.184 as costs rise 0 → 20 bps. |
 | Periodic retraining beats train-once | **Suggestive, exploratory.** Mean raw Sharpe ≈ 1.00 vs 0.387. |
 
-This is a null result reported as a null result, which is what the project was built to be
-able to do. The contribution is not a trading strategy; it is a **correctly instrumented
-negative finding** — a complete, tested, reproducible RL pipeline whose statistical
-apparatus was strong enough to refuse a result that a looser evaluation would have reported
-as a success. Three mechanisms explain the failure, each traceable to an artefact: poor
-allocation choice aggravated by cost drag; selection on a validation signal that does not
-transfer; and regime staleness from the frozen training cut-off.
+The evidence does not support a claim that the train-once agent is superior to the benchmark
+strategies. The contribution of this work is a complete, tested, and reproducible RL
+evaluation pipeline that records the sources of uncertainty rather than treating a favourable
+validation result as conclusive. The observed performance gap is associated with three
+testable mechanisms: allocation choices that were poorly defensive during 2022, transaction
+costs arising from high turnover, and a validation signal that did not transfer to the test
+period. The walk-forward analysis further suggests that the fixed training cut-off may be
+important.
+
+These mechanisms motivate the follow-up experiments in Section 8. They are hypotheses to be
+tested on a new, prespecified evaluation protocol; they are not claims of achieved
+outperformance.
 
 ---
 
 ## 8. Remaining work
+
+### Deliverables
 
 | Item | Weight | Status |
 |---|---|---|
@@ -331,13 +335,38 @@ transfer; and regime staleness from the frozen training cut-off.
 | Video presentation (≤ 20 min) | 4 pts | Not started — slides to be built from the 52 committed figures |
 | Documentation and zipped submission | 3 pts | `package_submission.py` builds and verifies it |
 
-Known defects to clear before the final report:
+### Corrections before the final submission
 
-1. **Mixed Sharpe bases in the `inference` block** of `_build_nb05.py` (see Section 4). Two
-   keys read from the excess scorecard while the statistics are computed on raw returns.
-   Requires re-running notebook 05. No conclusion changes; the corrected figure is less
-   favourable to the agent.
+1. **Persist Sharpe ratios on a consistent basis** in the `inference` block of `_build_nb05.py`
+   (see Section 4). The scorecard uses excess returns while the inference statistics use raw
+   returns. The final notebook run will store both bases explicitly for every strategy.
 2. The legend in `05_04_allocation_over_time.png` overlaps its title and needs a layout fix.
+
+### Improvements targeted at beating the static benchmarks
+
+Each diagnostic in this report points to a specific improvement experiment. The interventions
+are prioritised by their direct connection to observed limitations. Their effect on benchmark
+performance remains an empirical question and will be evaluated on data not used for model
+selection.
+
+| # | Proposed change | Diagnostic addressed | Evaluation criterion | Scope |
+|---|---|---|---|---|
+| 1 | **Evaluate periodic retraining** rather than a single train-once policy | Regime staleness (§6) | Confirm the walk-forward result on a new, prespecified holdout | Exploratory result exists; confirmation is required |
+| 2 | **Ensemble independently seeded agents** by averaging Q-values or voting on actions | Seed sd 0.131 exceeds the estimated effects (§5) | Compare ensemble mean and dispersion with single-seed policies | Feasible as a follow-up experiment |
+| 3 | **Use median-across-seeds or purged cross-fold model selection** rather than maximum validation Sharpe | Validation/test correlation of −0.365 (§5) | Assess whether selection stability and out-of-sample ranking improve | Feasible as a follow-up experiment |
+| 4 | **Reduce turnover** with a no-trade band, switching penalty, or lower decision frequency | 9.43× annual turnover and 4.69% terminal-wealth cost (§3) | Measure turnover, net return, and drawdown jointly | Feasible with an environment revision and retraining |
+| 5 | **Extend the state and risk specification** with additional regime features and a state-dependent drawdown penalty | Limited defensive reallocation during 2022 (§3) | Evaluate whether allocations and drawdown behaviour improve in adverse regimes | Beyond the current two-week window |
+| 6 | **Broaden the evaluation** through a new holdout period or a second asset universe | 1,254 days versus a 4,500-day estimated requirement (§4) | Re-estimate uncertainty on additional independent observations | Data- and time-dependent |
+
+The appropriate short-term objective is to determine whether periodic retraining, more stable
+model selection, and lower turnover can improve on the diversified benchmarks, particularly
+60/40 and equal weight. The evidence does not justify forecasting a specific Sharpe ratio or
+claiming that these changes will outperform most benchmarks. SPY's 0.700 excess Sharpe over
+this predominantly favourable equity period remains a demanding reference point for an
+unlevered, diversified allocator.
+
+Any experiment conducted after the original test split was opened will be identified as
+exploratory until it is confirmed on data not used during development.
 
 **Schedule.** Days 1–5 finalise the report against the CSVs · days 6–8 experience statement,
 documentation, archive verification · days 9–12 slide deck and recording · days 13–14 buffer.

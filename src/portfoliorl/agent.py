@@ -79,6 +79,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, Sequence
 
 import numpy as np
 import torch
@@ -453,6 +454,73 @@ class DQNAgent:
         agent.target.load_state_dict(blob["target"])
         agent.n_updates = int(blob.get("n_updates", 0))
         return agent
+
+
+# --------------------------------------------------------------------------- #
+# Evaluation-time policy wrappers
+#
+# Both of these reduce variance without touching training. Seed dispersion is
+# the largest single effect in this project -- larger than double vs vanilla,
+# duelling vs plain, or the tuned vs default hyperparameters -- so averaging
+# across seeds and refusing to act on marginal Q-value differences buys more
+# than any architectural change measured so far.
+# --------------------------------------------------------------------------- #
+def ensemble_q_values(agents: Sequence[DQNAgent]) -> Callable[[np.ndarray], np.ndarray]:
+    """Mean Q-values across independently seeded agents.
+
+    Averaging the *Q-values* rather than voting on the actions keeps the
+    magnitude of each agent's preference, so a single confident agent is not
+    outvoted by several indifferent ones.
+    """
+    if not agents:
+        raise ValueError("need at least one agent to ensemble")
+    n_actions = {a.n_actions for a in agents}
+    if len(n_actions) != 1:
+        raise ValueError(f"agents disagree on the action count: {sorted(n_actions)}")
+
+    def qfn(obs: np.ndarray) -> np.ndarray:
+        return np.mean([a.q_values(obs) for a in agents], axis=0)
+
+    return qfn
+
+
+def ensemble_policy(agents: Sequence[DQNAgent]) -> Callable[[np.ndarray], int]:
+    """Greedy policy over the ensemble-mean Q-values."""
+    qfn = ensemble_q_values(agents)
+    return lambda obs: int(np.argmax(qfn(obs)))
+
+
+def hysteresis_policy(
+    qfn: Callable[[np.ndarray], np.ndarray],
+    *,
+    margin: float = 0.0,
+    initial_action: int | None = None,
+) -> Callable[[np.ndarray], int]:
+    """Only rebalance when the best action beats the held one by ``margin``.
+
+    The agent trades roughly 9x its capital per year, and every one of those
+    trades pays 5 bps of two-sided cost. Much of that churn is the argmax
+    flipping between two allocations whose Q-values differ by less than the
+    noise in the estimate. Requiring a margin makes the policy commit.
+
+    The returned callable is *stateful* -- it remembers the previously held
+    action -- so build a fresh one per episode.
+    """
+    if margin < 0.0:
+        raise ValueError("margin must be non-negative")
+    held = initial_action if initial_action is not None else config.DEFAULT.env.initial_action
+    state = {"action": int(held)}
+
+    def policy(obs: np.ndarray) -> int:
+        q = np.asarray(qfn(obs), dtype=float)
+        best = int(np.argmax(q))
+        prev = state["action"]
+        if best != prev and (q[best] - q[prev]) <= margin:
+            best = prev
+        state["action"] = best
+        return best
+
+    return policy
 
 
 def variant_config(

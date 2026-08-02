@@ -247,7 +247,9 @@ def test_eval_mode_is_deterministic_and_covers_the_whole_split(train_dataset):
 def test_wealth_never_becomes_non_finite(train_dataset):
     rng = np.random.default_rng(0)
     daily, summary = env.run_policy(
-        train_dataset, lambda _obs: int(rng.integers(0, 6)), seed=0
+        train_dataset,
+        lambda _obs: int(rng.integers(0, len(config.ACTION_ALLOCATIONS))),
+        seed=0,
     )
     assert np.isfinite(daily["wealth"]).all()
     assert (daily["wealth"] > 0).all()
@@ -258,3 +260,81 @@ def test_weights_always_sum_to_one(train_dataset):
     daily, _ = env.run_policy(train_dataset, lambda _obs: 2)
     weight_cols = [c for c in daily.columns if c.startswith("w_")]
     np.testing.assert_allclose(daily[weight_cols].sum(axis=1).to_numpy(), 1.0, atol=1e-12)
+
+
+# --------------------------------------------------------------------------- #
+# Switching penalty
+# --------------------------------------------------------------------------- #
+def test_switch_penalty_charges_changes_and_not_holds(train_dataset):
+    cfg = dataclasses.replace(config.DEFAULT.env, lambda_switch=0.001)
+    market = env.PortfolioEnv(train_dataset, cfg, mode="eval")
+    market.reset(seed=0)
+
+    _, _, _, _, changed = market.step(3)  # initial_action is 0, so this switches
+    _, _, _, _, held = market.step(3)
+
+    assert changed["switched"] == 1.0
+    assert changed["reward_switch_penalty"] == pytest.approx(
+        -cfg.reward_scale * cfg.lambda_switch
+    )
+    assert held["switched"] == 0.0
+    assert held["reward_switch_penalty"] == 0.0
+
+
+def test_switch_penalty_is_inert_at_zero(train_dataset):
+    """The default must reproduce the proposal's reward exactly."""
+    cfg = dataclasses.replace(config.DEFAULT.env, lambda_switch=0.0)
+    market = env.PortfolioEnv(train_dataset, cfg, mode="eval")
+    market.reset(seed=0)
+    for action in (1, 4, 4, 6, 0):
+        _, _, _, _, info = market.step(action)
+        assert info["reward_switch_penalty"] == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# Previous-action observation
+# --------------------------------------------------------------------------- #
+def test_prev_action_feature_widens_observation_and_tracks_the_last_action(train_dataset):
+    cfg = dataclasses.replace(config.DEFAULT.env, include_prev_action=True)
+    market = env.PortfolioEnv(train_dataset, cfg, mode="eval")
+    obs, _ = market.reset(seed=0)
+
+    base = env.PortfolioEnv(train_dataset, config.DEFAULT.env, mode="eval")
+    base_obs, _ = base.reset(seed=0)
+
+    assert obs.shape[0] == base_obs.shape[0] + 1
+    assert obs.shape[0] == market.observation_space.shape[0]
+    assert obs.shape[0] == train_dataset.env_obs_dim(cfg)
+
+    last = len(config.ACTION_ALLOCATIONS) - 1
+    assert obs[-1] == pytest.approx(cfg.initial_action / last)
+
+    nxt, _, _, _, _ = market.step(3)
+    assert nxt[-1] == pytest.approx(3 / last)
+
+
+# --------------------------------------------------------------------------- #
+# Stress-regime episode sampling
+# --------------------------------------------------------------------------- #
+def test_stress_sampling_is_only_computed_when_enabled(train_dataset):
+    off = env.PortfolioEnv(train_dataset, config.DEFAULT.env, mode="train")
+    assert len(off._stress_starts) == 0
+
+    cfg = dataclasses.replace(config.DEFAULT.env, stress_sampling_fraction=0.5)
+    evaluation = env.PortfolioEnv(train_dataset, cfg, mode="eval")
+    assert len(evaluation._stress_starts) == 0, "curriculum must never touch evaluation"
+
+
+def test_stress_sampling_concentrates_episode_starts(train_dataset):
+    cfg = dataclasses.replace(config.DEFAULT.env, stress_sampling_fraction=1.0)
+    market = env.PortfolioEnv(train_dataset, cfg, mode="train")
+    if len(market._stress_starts) == 0:
+        pytest.skip("synthetic prices contain no stress window")
+
+    stress = set(market._stress_starts.tolist())
+    starts = []
+    for seed in range(50):
+        market.reset(seed=seed)
+        starts.append(market._start_idx)
+
+    assert all(s in stress for s in starts)

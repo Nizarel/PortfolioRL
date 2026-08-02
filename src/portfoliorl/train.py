@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -86,13 +87,18 @@ def evaluate(
     dataset: Dataset,
     env_cfg: config.EnvConfig | None = None,
     risk_free: float | pd.Series = 0.0,
+    policy: Callable[[np.ndarray], int] | None = None,
 ) -> dict[str, Any]:
     """Deterministic greedy pass over ``dataset``; returns headline metrics.
 
     Uses the same :func:`~portfoliorl.env.run_policy` as every benchmark, so the
     agent is charged the same transaction costs on the same dates.
+
+    ``policy`` overrides the agent's own greedy rule, which is how ensembles and
+    the hysteresis wrapper are scored through this identical code path rather
+    than a parallel one that might drift out of agreement.
     """
-    daily, summary = run_policy(dataset, agent.policy(), env_cfg=env_cfg)
+    daily, summary = run_policy(dataset, policy or agent.policy(), env_cfg=env_cfg)
     perf = metrics.performance_summary(
         daily, risk_free=risk_free, summary=summary, name="agent"
     )
@@ -100,8 +106,8 @@ def evaluate(
     counts = np.bincount(actions, minlength=len(config.ACTION_ALLOCATIONS))
     share = counts / max(1, counts.sum())
     # Entropy of the action distribution, in nats.  A collapsed policy (one
-    # action always) scores 0; a uniform policy scores log(6) = 1.79.  This is
-    # the cheapest early-warning signal for a degenerate agent.
+    # action always) scores 0; a uniform policy over the menu scores its log.
+    # This is the cheapest early-warning signal for a degenerate agent.
     nz = share[share > 0]
     entropy = float(-(nz * np.log(nz)).sum())
     return {
@@ -174,7 +180,13 @@ def train_dqn(
     episodes: list[dict[str, Any]] = []
     updates: list[dict[str, Any]] = []
     evaluations: list[dict[str, Any]] = []
-    best: dict[str, Any] = {"val_sharpe": -np.inf, "step": 0}
+    best: dict[str, Any] = {"val_sharpe": -np.inf, "val_score": -np.inf, "step": 0}
+    select_window = max(1, agent_cfg.select_window)
+    recent_sharpes: deque[float] = deque(maxlen=select_window)
+    # A run with fewer evaluations than the window can never fill it, so the
+    # smoothed rule would select nothing at all.
+    n_evals = agent_cfg.total_steps // max(agent_cfg.eval_every, 1)
+    selection = agent_cfg.selection if n_evals >= select_window else "best"
 
     window: list[Any] = []          # UpdateStats awaiting aggregation
     ep_reward = 0.0
@@ -256,7 +268,20 @@ def train_dqn(
             if log_file is not None:
                 log_file.write(json.dumps({"kind": "eval", **row}) + "\n")
 
-            if ev["sharpe"] > best["val_sharpe"]:
+            recent_sharpes.append(ev["sharpe"])
+            if selection == "smoothed":
+                # Only score once the window is full, so an early spike cannot
+                # win on a one-element average.
+                score = (
+                    float(np.mean(recent_sharpes))
+                    if len(recent_sharpes) == select_window
+                    else -np.inf
+                )
+            else:
+                score = ev["sharpe"]
+            row["val_score"] = score
+
+            if score > best["val_score"]:
                 best = {k: v for k, v in row.items()}
                 best["episode"] = ep_index
                 if save_checkpoints:

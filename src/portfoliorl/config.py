@@ -94,7 +94,14 @@ class DataConfig:
 # Environment
 # --------------------------------------------------------------------------- #
 #: Discrete allocation menu.  Rows must sum to 1 and align with DataConfig.tickers
-#: order (SPY, TLT, GLD, SHY).  Mirrors Table 4 of the project proposal.
+#: order (SPY, TLT, GLD, SHY).  Rows 0-5 mirror Table 4 of the project proposal.
+#:
+#: Row 6 is a documented departure from the proposal.  The original menu topped
+#: out at 80/20, so 100% SPY -- the single best-performing benchmark over the
+#: test window -- was not reachable by *any* policy.  The agent was being asked
+#: to beat an allocation it was structurally forbidden from holding.  New rows
+#: are appended, never inserted, so the integer indices used by
+#: ``benchmarks.STATIC_BENCHMARKS`` stay valid.
 ACTION_ALLOCATIONS: tuple[tuple[float, float, float, float], ...] = (
     (0.00, 0.00, 0.00, 1.00),  # 0 defensive / cash-like
     (0.60, 0.40, 0.00, 0.00),  # 1 traditional balanced 60/40
@@ -102,6 +109,7 @@ ACTION_ALLOCATIONS: tuple[tuple[float, float, float, float], ...] = (
     (0.80, 0.20, 0.00, 0.00),  # 3 equity-heavy
     (0.25, 0.25, 0.25, 0.25),  # 4 equal weight
     (0.20, 0.60, 0.20, 0.00),  # 5 defensive bond-heavy
+    (1.00, 0.00, 0.00, 0.00),  # 6 full equity
 )
 
 ACTION_LABELS: tuple[str, ...] = (
@@ -111,6 +119,7 @@ ACTION_LABELS: tuple[str, ...] = (
     "Equity-heavy 80/20",
     "Equal weight",
     "Bond-heavy 20/60/20",
+    "Full equity (100% SPY)",
 )
 
 
@@ -147,6 +156,13 @@ class EnvConfig:
     #: no strategy gets a free ride into the market.
     initial_action: int = 0
 
+    #: Truncate the allocation menu to its first ``n_actions`` rows.  The full
+    #: equity row was *appended* at index 6, so ``n_actions = 6`` reproduces the
+    #: proposal's Table 4 menu exactly -- which is what makes "does the extra
+    #: action help?" an answerable question rather than a claim.
+    #: ``None`` uses the whole menu.
+    n_actions: int | None = None
+
     use_log_return: bool = True
     reward_scale: float = 100.0
 
@@ -177,6 +193,21 @@ class EnvConfig:
     #: which encodes loss aversion without paralysing the policy.
     lambda_drawdown: float = 0.50
 
+    #: Applied to a plain 0/1 indicator that the allocation *changed* this
+    #: decision, independent of how large the change was.  ``lambda_turnover``
+    #: is proportional to trade size, so it barely discourages the many tiny
+    #: reallocations that generate most of the agent's ~9x annual turnover.
+    #: A fixed charge per switch is what makes the policy commit to a holding.
+    #:
+    #: Calibration: this multiplies an indicator of magnitude 1, not a quantity
+    #: of order 1e-2 like the other three penalties, so it needs a weight two
+    #: orders of magnitude smaller.  The weekly log-return term is O(1.5e-3),
+    #: so 0.001 charges roughly two-thirds of a typical week's return per
+    #: switch.  Values like 0.5 -- reasonable for ``lambda_drawdown`` -- would
+    #: be ~300x the return term and freeze the policy outright.
+    #: Default 0.0 keeps the proposal's reward exactly reproducible.
+    lambda_switch: float = 0.0
+
     #: Look-back for the portfolio-volatility state feature and reward penalty.
     portfolio_vol_window: int = 20
 
@@ -185,6 +216,29 @@ class EnvConfig:
     # agent simply memorises the single realised path.
     random_start_episodes: bool = True
     episode_length: int = 52  # decisions per episode (~1 year at weekly steps)
+
+    #: Fraction of training episodes forced to start in a *stress* regime
+    #: (equity momentum negative and the stock/bond correlation unusually high
+    #: -- the 2022 configuration, where bonds stop hedging equities).
+    #:
+    #: Measured on the 2004-2017 training split, the 60-day SPY/TLT correlation
+    #: is negative on 92% of days (median -0.46).  A regime where equities fall
+    #: while that correlation turns *positive* covers 28 days, 1% of the split.
+    #: Uniform sampling therefore almost never shows the agent the regime that
+    #: produced its worst walk-forward year.  0.0 restores uniform sampling.
+    stress_sampling_fraction: float = 0.0
+
+    #: Quantile of the in-split correlation distribution above which a day
+    #: counts as stressed.  An absolute "correlation > 0" threshold is the
+    #: cleaner story but selects too few days to train on, so the threshold is
+    #: defined relative to what the split actually contains: 0.70 keeps the
+    #: most bond-unhelpful third of equity-drawdown days (92 days in train).
+    stress_corr_quantile: float = 0.70
+
+    #: Append the previously held action to the observation.  Without it the
+    #: state is not Markov once a switching penalty exists: the agent cannot
+    #: tell whether keeping its allocation is free or costly.
+    include_prev_action: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -217,6 +271,14 @@ class AgentConfig:
 
     total_steps: int = 120_000
     eval_every: int = 5_000
+
+    #: Checkpoint selection rule. ``"best"`` takes the single highest validation
+    #: Sharpe; ``"smoothed"`` takes the highest rolling mean over
+    #: ``select_window`` consecutive evaluations. With ~24 evaluations per run,
+    #: picking the single best is largely picking the luckiest -- notebook 05
+    #: measures a validation-to-test rank correlation of -0.365.
+    selection: str = "best"
+    select_window: int = 3
 
     seed: int = 0
 

@@ -258,6 +258,15 @@ class Dataset:
     def obs_dim(self) -> int:
         return self.n_market_features + N_PORTFOLIO_FEATURES
 
+    def env_obs_dim(self, cfg: config.EnvConfig | None = None) -> int:
+        """Observation width actually produced by :class:`PortfolioEnv`.
+
+        ``obs_dim`` reports the base layout; the previous-action feature is
+        optional and only present when the env config asks for it.
+        """
+        cfg = cfg or config.DEFAULT.env
+        return self.obs_dim + int(cfg.include_prev_action)
+
     def split(self, name: str, cfg: config.DataConfig | None = None) -> "Dataset":
         """Return a new :class:`Dataset` restricted to one chronological split."""
         from .data import split_bounds
