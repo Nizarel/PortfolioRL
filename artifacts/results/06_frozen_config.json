@@ -1,0 +1,49 @@
+{
+  "tag": "06_confirmatory",
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "total_steps": 60000,
+  "test_years": [
+    2021,
+    2025
+  ],
+  "env": {
+    "steps_per_decision": 5,
+    "initial_value": 100000.0,
+    "transaction_cost_bps": 5.0,
+    "initial_action": 0,
+    "n_actions": 6,
+    "use_log_return": true,
+    "reward_scale": 100.0,
+    "lambda_turnover": 0.002,
+    "lambda_volatility": 0.1,
+    "lambda_drawdown": 0.5,
+    "lambda_switch": 0.001,
+    "portfolio_vol_window": 20,
+    "random_start_episodes": true,
+    "episode_length": 52,
+    "stress_sampling_fraction": 0.25,
+    "stress_corr_quantile": 0.7,
+    "include_prev_action": true
+  },
+  "agent_overrides": {
+    "selection": "smoothed",
+    "select_window": 3
+  },
+  "ensemble": true,
+  "hysteresis_margin": 0.0,
+  "tested_against": [
+    "60/40 rebalanced",
+    "Equal weight"
+  ]
+}

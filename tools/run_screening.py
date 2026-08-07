@@ -32,44 +32,59 @@ BASE_ENV = config.DEFAULT.env
 # The proposal's original 6-action menu, so rung S0 is the honest starting point.
 PROPOSAL_MENU = dataclasses.replace(BASE_ENV, n_actions=6)
 
+SMOOTHED = {"selection": "smoothed", "select_window": 3}
+
+# S2 tested the appended full-equity action and lost decisively (median 0.474 vs
+# S1's 0.782), so every later rung is stacked on S1's menu rather than S2's.
+# Screening exists to answer "does this help the config we will ship", and after
+# S2 the shipped menu is the proposal's six actions.
 LADDER: dict[str, dict] = {
     "S0 baseline": dict(
         env_cfg=PROPOSAL_MENU,
     ),
     "S1 smoothed+ensemble": dict(
         env_cfg=PROPOSAL_MENU,
-        agent_overrides={"selection": "smoothed", "select_window": 3},
+        agent_overrides=SMOOTHED,
         ensemble=True,
     ),
     "S2 +full equity action": dict(
         env_cfg=BASE_ENV,
-        agent_overrides={"selection": "smoothed", "select_window": 3},
+        agent_overrides=SMOOTHED,
         ensemble=True,
     ),
     "S3 +switch penalty": dict(
-        env_cfg=dataclasses.replace(BASE_ENV, lambda_switch=0.001, include_prev_action=True),
-        agent_overrides={"selection": "smoothed", "select_window": 3},
+        env_cfg=dataclasses.replace(
+            PROPOSAL_MENU, lambda_switch=0.001, include_prev_action=True
+        ),
+        agent_overrides=SMOOTHED,
         ensemble=True,
     ),
     "S4 +stress sampling": dict(
         env_cfg=dataclasses.replace(
-            BASE_ENV,
+            PROPOSAL_MENU,
             lambda_switch=0.001,
             include_prev_action=True,
             stress_sampling_fraction=0.25,
         ),
-        agent_overrides={"selection": "smoothed", "select_window": 3},
+        agent_overrides=SMOOTHED,
         ensemble=True,
     ),
     "S5 +longer episodes": dict(
         env_cfg=dataclasses.replace(
-            BASE_ENV,
+            PROPOSAL_MENU,
             lambda_switch=0.001,
             include_prev_action=True,
             stress_sampling_fraction=0.25,
             episode_length=104,
         ),
-        agent_overrides={"selection": "smoothed", "select_window": 3},
+        agent_overrides=SMOOTHED,
+        ensemble=True,
+    ),
+    # S3 alone hurt the ensemble but S4 = S3 + stress sampling was the best rung,
+    # so the switch penalty's contribution is confounded. S6 is S4 without it.
+    "S6 stress sampling alone": dict(
+        env_cfg=dataclasses.replace(PROPOSAL_MENU, stress_sampling_fraction=0.25),
+        agent_overrides=SMOOTHED,
         ensemble=True,
     ),
 }

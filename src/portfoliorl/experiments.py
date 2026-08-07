@@ -39,6 +39,8 @@ invalidate the existing ones.
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -75,14 +77,29 @@ def _progress_path(tag: str) -> Path:
     return CURVE_DIR / f"{tag}.progress.jsonl"
 
 
-def _load_progress(tag: str) -> tuple[list[dict[str, Any]], dict[str, pd.DataFrame]]:
+def _fingerprint(**parts: Any) -> str:
+    """Short hash of the settings a resumed run must agree with.
+
+    The journal is keyed only by tag, so editing a configuration and rerunning
+    under the same tag would silently splice runs from two different designs
+    into one result table -- a corruption that no error message would reveal and
+    that the numbers alone would not look wrong enough to expose.
+    """
+    blob = json.dumps(parts, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def _load_progress(
+    tag: str, expected: str | None = None
+) -> tuple[list[dict[str, Any]], dict[str, pd.DataFrame], int]:
     """Recover rows and curves from a run that did not finish."""
     path = _progress_path(tag)
     if not path.exists():
-        return [], {}
+        return [], {}, 0
 
     rows: list[dict[str, Any]] = []
     curves: dict[str, pd.DataFrame] = {}
+    stale = 0
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -92,6 +109,10 @@ def _load_progress(tag: str) -> tuple[list[dict[str, Any]], dict[str, pd.DataFra
             # a torn final line means the process died mid-write; everything
             # before it is still good
             break
+        stamp = row.pop("_fingerprint", None)
+        if expected is not None and stamp != expected:
+            stale += 1
+            continue
         curve_path = _curve_path(tag, str(row["variant"]), int(row["seed"]))
         if not curve_path.exists():
             continue
@@ -99,16 +120,21 @@ def _load_progress(tag: str) -> tuple[list[dict[str, Any]], dict[str, pd.DataFra
         curves[f"{row['variant']}|{row['seed']}"] = pd.read_csv(
             curve_path, index_col=0, parse_dates=True
         )
-    return rows, curves
+    return rows, curves, stale
 
 
-def _record_progress(tag: str, row: Mapping[str, Any], curve: pd.DataFrame) -> None:
+def _record_progress(
+    tag: str, row: Mapping[str, Any], curve: pd.DataFrame, fingerprint: str | None = None
+) -> None:
     """Persist one finished run. Curve first, so the journal never claims a
     result whose curve is missing."""
     CURVE_DIR.mkdir(parents=True, exist_ok=True)
     curve.to_csv(_curve_path(tag, str(row["variant"]), int(row["seed"])))
+    entry = dict(row)
+    if fingerprint is not None:
+        entry["_fingerprint"] = fingerprint
     with _progress_path(tag).open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(dict(row), default=str) + "\n")
+        handle.write(json.dumps(entry, default=str) + "\n")
 
 
 def _clear_progress(tag: str) -> None:
@@ -116,12 +142,20 @@ def _clear_progress(tag: str) -> None:
 
 
 def _resume(
-    tag: str, force: bool, progress: Callable[[str], None] | None
+    tag: str,
+    force: bool,
+    progress: Callable[[str], None] | None,
+    fingerprint: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, pd.DataFrame], set[tuple[str, int]]]:
     if force:
         _clear_progress(tag)
         return [], {}, set()
-    rows, curves = _load_progress(tag)
+    rows, curves, stale = _load_progress(tag, expected=fingerprint)
+    if stale and progress:
+        progress(
+            f"{tag}: discarded {stale} journalled run(s) written under a different "
+            f"configuration"
+        )
     if rows and progress:
         progress(f"resuming {tag}: {len(rows)} run(s) recovered from a previous attempt")
     return rows, curves, {(str(r["variant"]), int(r["seed"])) for r in rows}
@@ -501,7 +535,16 @@ def walk_forward(
 
     env_cfg = env_cfg or config.DEFAULT.env
     overrides = dict(agent_overrides or {})
-    rows, curves, already_done = _resume(tag, force, progress)
+    stamp = _fingerprint(
+        env=dataclasses.asdict(env_cfg),
+        agent_overrides=overrides,
+        total_steps=total_steps,
+        eval_every=eval_every,
+        ensemble=ensemble,
+        hysteresis_margin=hysteresis_margin,
+        folds=fold_kwargs,
+    )
+    rows, curves, already_done = _resume(tag, force, progress, fingerprint=stamp)
 
     def _policy_for(agents):
         qfn = ensemble_q_values(agents)
@@ -549,7 +592,7 @@ def walk_forward(
             }
             rows.append(row)
             curves[f"{label}|{seed}"] = test_daily
-            _record_progress(tag, row, test_daily)
+            _record_progress(tag, row, test_daily, fingerprint=stamp)
             if progress:
                 progress(f"  fold {label}  seed {seed}  "
                          f"train to {fold['train_end']}  "
@@ -567,7 +610,7 @@ def walk_forward(
             }
             rows.append(row)
             curves[f"{label}|{-1}"] = test_daily
-            _record_progress(tag, row, test_daily)
+            _record_progress(tag, row, test_daily, fingerprint=stamp)
             if progress:
                 progress(f"  fold {label}  ensemble  "
                          f"test Sharpe {test_metrics['test_sharpe']:+.2f}")

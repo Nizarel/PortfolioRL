@@ -28,7 +28,18 @@ TOTAL_STEPS = 60_000
 FIRST_YEAR, LAST_YEAR = 2021, 2025
 
 # --- Frozen by Phase 3 screening ------------------------------------------ #
-FROZEN_ENV = dataclasses.replace(config.DEFAULT.env)
+# Screening rung S4, chosen on ensemble Sharpe because the ensemble is what ships.
+#   n_actions=6                 S2 added a 100% SPY action and lost 0.37 ensemble.
+#   lambda_switch/prev_action   turnover lever: dropping it cost +39% turnover (S6).
+#   stress_sampling_fraction    level driver: the 2022-style regime is 1% of train.
+#   episode_length stays 52     S5's 104-week episodes collapsed the ensemble to 0.35.
+FROZEN_ENV = dataclasses.replace(
+    config.DEFAULT.env,
+    n_actions=6,
+    lambda_switch=0.001,
+    include_prev_action=True,
+    stress_sampling_fraction=0.25,
+)
 FROZEN_AGENT_OVERRIDES: dict = {"selection": "smoothed", "select_window": 3}
 FROZEN_ENSEMBLE = True
 FROZEN_HYSTERESIS = 0.0

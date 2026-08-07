@@ -313,10 +313,11 @@ class TestResume:
         with experiments._progress_path(tag).open("a", encoding="utf-8") as handle:
             handle.write('{"variant": "B", "seed": 0, "test_sh')
 
-        rows, curves = experiments._load_progress(tag)
+        rows, curves, stale = experiments._load_progress(tag)
         assert len(rows) == 1
         assert rows[0]["variant"] == "A"
         assert len(curves) == 1
+        assert stale == 0
 
     def test_a_journal_entry_whose_curve_is_missing_is_discarded(self):
         """Curve is written before the journal line, so this should not happen --
@@ -327,9 +328,37 @@ class TestResume:
         )
         experiments._curve_path(tag, "A", 0).unlink()
 
-        rows, curves = experiments._load_progress(tag)
+        rows, curves, _ = experiments._load_progress(tag)
         assert rows == []
         assert curves == {}
+
+    def test_a_journal_written_under_another_config_is_not_resumed(self):
+        """The journal is keyed only by tag, so editing a config and rerunning
+        under the same tag must not splice two designs into one result table."""
+        tag = "unit_fingerprint"
+        experiments._record_progress(
+            tag,
+            {"variant": "A", "seed": 0, "test_sharpe": 1.0},
+            _fake_curve(),
+            fingerprint="aaaaaaaaaaaaaaaa",
+        )
+
+        rows, curves, stale = experiments._load_progress(tag, expected="bbbbbbbbbbbbbbbb")
+        assert rows == []
+        assert curves == {}
+        assert stale == 1
+
+        rows, _, stale = experiments._load_progress(tag, expected="aaaaaaaaaaaaaaaa")
+        assert len(rows) == 1
+        assert stale == 0
+        assert "_fingerprint" not in rows[0], "the stamp must not leak into results"
+
+    def test_fingerprint_tracks_the_settings_that_change_a_run(self):
+        base = experiments._fingerprint(env={"n_actions": 6}, ensemble=True)
+        assert base == experiments._fingerprint(ensemble=True, env={"n_actions": 6}), \
+            "key order must not change the stamp"
+        assert base != experiments._fingerprint(env={"n_actions": 7}, ensemble=True)
+        assert base != experiments._fingerprint(env={"n_actions": 6}, ensemble=False)
 
     def test_force_discards_a_previous_partial_run(self, dataset):
         tag = "unit_force"
